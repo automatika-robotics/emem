@@ -1,0 +1,822 @@
+import json
+import sqlite3
+import threading
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import hnswlib
+import numpy as np
+
+from emem.config import SpatioTemporalMemoryConfig
+from emem.embeddings import EmbeddingProvider, NullEmbeddingProvider
+from emem.spatial import SpatialIndex, _to_xyz
+from emem.types import (
+    Edge,
+    EdgeType,
+    EpisodeNode,
+    EpisodeStatus,
+    GistNode,
+    ObservationNode,
+    Tier,
+)
+
+
+class MemoryStore:
+    """Hybrid graph-based spatio-temporal memory store.
+
+    Combines SQLite (structured data + graph edges), hnswlib (vector similarity),
+    and rtree (spatial range queries) into a single queryable store.
+    """
+
+    def __init__(
+        self,
+        config=None,  # type: Optional[SpatioTemporalMemoryConfig]
+        embedding_provider=None,  # type: Optional[EmbeddingProvider]
+    ):
+        self.config = config or SpatioTemporalMemoryConfig()
+        self.embedding_provider = embedding_provider or NullEmbeddingProvider(self.config.embedding_dim)
+        self._auto_embed = not isinstance(self.embedding_provider, NullEmbeddingProvider)
+        self._lock = threading.Lock()
+
+        # SQLite
+        self._db = sqlite3.connect(self.config.db_path, check_same_thread=False)
+        self._db.row_factory = sqlite3.Row
+        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA synchronous=NORMAL")
+        self._init_schema()
+
+        # hnswlib
+        self._hnsw = hnswlib.Index(space="cosine", dim=self.embedding_provider.dim)
+        self._hnsw_path = Path(self.config.hnsw_path)
+        self._hnsw_id_map = {}  # type: Dict[int, str]
+        self._hnsw_str_map = {}  # type: Dict[str, int]
+        self._hnsw_counter = 0
+        if self._hnsw_path.exists():
+            self._hnsw.load_index(str(self._hnsw_path), max_elements=self.config.hnsw_max_elements)
+            self._load_hnsw_mappings()
+        else:
+            self._hnsw.init_index(
+                max_elements=self.config.hnsw_max_elements,
+                ef_construction=self.config.hnsw_ef_construction,
+                M=self.config.hnsw_m,
+            )
+        self._hnsw.set_ef(self.config.hnsw_ef_search)
+
+        # Spatial index (in-memory, rebuilt on load)
+        self._spatial = SpatialIndex()
+        self._load_spatial_index()
+
+    def _init_schema(self):
+        # type: () -> None
+        self._db.executescript("""
+            CREATE TABLE IF NOT EXISTS observations (
+                id TEXT PRIMARY KEY,
+                text TEXT NOT NULL,
+                x REAL NOT NULL,
+                y REAL NOT NULL,
+                z REAL NOT NULL DEFAULT 0.0,
+                timestamp REAL NOT NULL,
+                layer_name TEXT NOT NULL DEFAULT 'default',
+                source_type TEXT NOT NULL DEFAULT 'manual',
+                confidence REAL NOT NULL DEFAULT 1.0,
+                episode_id TEXT,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                tier TEXT NOT NULL DEFAULT 'short_term',
+                has_embedding INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_obs_timestamp ON observations(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_obs_layer ON observations(layer_name);
+            CREATE INDEX IF NOT EXISTS idx_obs_episode ON observations(episode_id);
+            CREATE INDEX IF NOT EXISTS idx_obs_tier ON observations(tier);
+
+            CREATE TABLE IF NOT EXISTS episodes (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                start_time REAL NOT NULL,
+                end_time REAL,
+                status TEXT NOT NULL DEFAULT 'active',
+                gist TEXT NOT NULL DEFAULT '',
+                has_gist_embedding INTEGER NOT NULL DEFAULT 0,
+                parent_episode_id TEXT,
+                metadata TEXT NOT NULL DEFAULT '{}'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ep_name ON episodes(name);
+            CREATE INDEX IF NOT EXISTS idx_ep_status ON episodes(status);
+
+            CREATE TABLE IF NOT EXISTS gists (
+                id TEXT PRIMARY KEY,
+                text TEXT NOT NULL,
+                cx REAL NOT NULL,
+                cy REAL NOT NULL,
+                cz REAL NOT NULL DEFAULT 0.0,
+                radius REAL NOT NULL,
+                time_start REAL NOT NULL,
+                time_end REAL NOT NULL,
+                source_observation_count INTEGER NOT NULL,
+                source_observation_ids TEXT NOT NULL DEFAULT '[]',
+                layer_name TEXT,
+                episode_id TEXT,
+                has_embedding INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_gist_time ON gists(time_start, time_end);
+
+            CREATE TABLE IF NOT EXISTS edges (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                edge_type TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_edge_source ON edges(source_id);
+            CREATE INDEX IF NOT EXISTS idx_edge_target ON edges(target_id);
+            CREATE INDEX IF NOT EXISTS idx_edge_type ON edges(edge_type);
+
+            CREATE TABLE IF NOT EXISTS hnsw_mappings (
+                int_id INTEGER PRIMARY KEY,
+                str_id TEXT NOT NULL,
+                node_type TEXT NOT NULL DEFAULT 'observation'
+            );
+        """)
+        self._db.commit()
+
+    def _load_hnsw_mappings(self):
+        # type: () -> None
+        rows = self._db.execute("SELECT int_id, str_id FROM hnsw_mappings").fetchall()
+        for row in rows:
+            self._hnsw_id_map[row["int_id"]] = row["str_id"]
+            self._hnsw_str_map[row["str_id"]] = row["int_id"]
+        if rows:
+            self._hnsw_counter = max(r["int_id"] for r in rows)
+
+    def _load_spatial_index(self):
+        # type: () -> None
+        rows = self._db.execute(
+            "SELECT id, x, y, z FROM observations WHERE tier != 'archived'"
+        ).fetchall()
+        for row in rows:
+            self._spatial.insert(row["id"], np.array([row["x"], row["y"], row["z"]]))
+
+    def _next_hnsw_id(self):
+        # type: () -> int
+        self._hnsw_counter += 1
+        return self._hnsw_counter
+
+    def _add_to_hnsw(self, str_id, embedding, node_type="observation"):
+        # type: (str, np.ndarray, str) -> None
+        # Remove old entry if re-inserting
+        if str_id in self._hnsw_str_map:
+            self._remove_from_hnsw(str_id)
+
+        int_id = self._next_hnsw_id()
+        self._hnsw_id_map[int_id] = str_id
+        self._hnsw_str_map[str_id] = int_id
+        if self._hnsw.get_current_count() >= self._hnsw.get_max_elements() - 1:
+            self._hnsw.resize_index(self._hnsw.get_max_elements() + self.config.hnsw_max_elements)
+        self._hnsw.add_items(embedding.reshape(1, -1), np.array([int_id]))
+        self._db.execute(
+            "INSERT OR REPLACE INTO hnsw_mappings (int_id, str_id, node_type) VALUES (?, ?, ?)",
+            (int_id, str_id, node_type),
+        )
+
+    def _remove_from_hnsw(self, str_id):
+        # type: (str) -> None
+        int_id = self._hnsw_str_map.get(str_id)
+        if int_id is not None:
+            self._hnsw.mark_deleted(int_id)
+            del self._hnsw_id_map[int_id]
+            del self._hnsw_str_map[str_id]
+            self._db.execute("DELETE FROM hnsw_mappings WHERE int_id = ?", (int_id,))
+
+    # ── Write Operations ──────────────────────────────────────────────
+
+    def add_observation(self, obs):
+        # type: (ObservationNode) -> str
+        return self.add_observations_batch([obs])[0]
+
+    def add_observations_batch(self, observations):
+        # type: (List[ObservationNode]) -> List[str]
+        ids = []
+        with self._lock:
+            # Batch embed observations that need it
+            needs_embed = [o for o in observations if o.embedding is None and self._auto_embed]
+            if needs_embed:
+                embeddings = self.embedding_provider.embed([o.text for o in needs_embed])
+                for o, emb in zip(needs_embed, embeddings):
+                    o.embedding = emb
+
+            for obs in observations:
+                x, y, z = _to_xyz(obs.coordinates)
+                has_emb = 1 if obs.embedding is not None else 0
+
+                self._db.execute(
+                    """INSERT OR REPLACE INTO observations
+                       (id, text, x, y, z, timestamp, layer_name, source_type,
+                        confidence, episode_id, metadata, tier, has_embedding)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (obs.id, obs.text, x, y, z, obs.timestamp, obs.layer_name,
+                     obs.source_type, obs.confidence, obs.episode_id,
+                     json.dumps(obs.metadata), obs.tier, has_emb),
+                )
+
+                if obs.embedding is not None:
+                    self._add_to_hnsw(obs.id, obs.embedding, "observation")
+
+                self._spatial.insert(obs.id, np.array([x, y, z]))
+
+                if obs.episode_id:
+                    self._add_edge(Edge(
+                        source_id=obs.id,
+                        target_id=obs.episode_id,
+                        edge_type=EdgeType.BELONGS_TO,
+                    ))
+                ids.append(obs.id)
+
+            self._db.commit()
+        return ids
+
+    def start_episode(self, name, start_time, metadata=None, parent_episode_id=None):
+        # type: (str, float, Optional[Dict[str, Any]], Optional[str]) -> str
+        ep = EpisodeNode(
+            name=name,
+            start_time=start_time,
+            metadata=metadata or {},
+            parent_episode_id=parent_episode_id,
+        )
+        with self._lock:
+            self._db.execute(
+                """INSERT INTO episodes (id, name, start_time, end_time, status, gist,
+                   has_gist_embedding, parent_episode_id, metadata)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (ep.id, ep.name, ep.start_time, ep.end_time, ep.status, ep.gist,
+                 0, ep.parent_episode_id, json.dumps(ep.metadata)),
+            )
+            if parent_episode_id:
+                self._add_edge(Edge(
+                    source_id=ep.id,
+                    target_id=parent_episode_id,
+                    edge_type=EdgeType.SUBTASK_OF,
+                ))
+            self._db.commit()
+        return ep.id
+
+    def end_episode(self, episode_id, end_time, gist="", gist_embedding=None):
+        # type: (str, float, str, Optional[np.ndarray]) -> None
+        with self._lock:
+            has_emb = 0
+            if gist_embedding is not None:
+                has_emb = 1
+                self._add_to_hnsw(episode_id, gist_embedding, "episode")
+
+            self._db.execute(
+                """UPDATE episodes SET end_time = ?, status = ?, gist = ?,
+                   has_gist_embedding = ? WHERE id = ?""",
+                (end_time, EpisodeStatus.COMPLETED.value, gist, has_emb, episode_id),
+            )
+            self._db.commit()
+
+    def add_gist(self, gist):
+        # type: (GistNode) -> str
+        with self._lock:
+            cx, cy, cz = _to_xyz(gist.center_position)
+
+            if gist.embedding is None and self._auto_embed:
+                gist.embedding = self.embedding_provider.embed([gist.text])[0]
+
+            has_emb = 1 if gist.embedding is not None else 0
+
+            self._db.execute(
+                """INSERT OR REPLACE INTO gists
+                   (id, text, cx, cy, cz, radius, time_start, time_end,
+                    source_observation_count, source_observation_ids,
+                    layer_name, episode_id, has_embedding)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (gist.id, gist.text, cx, cy, cz, gist.radius,
+                 gist.time_start, gist.time_end, gist.source_observation_count,
+                 json.dumps(gist.source_observation_ids), gist.layer_name,
+                 gist.episode_id, has_emb),
+            )
+
+            if gist.embedding is not None:
+                self._add_to_hnsw(gist.id, gist.embedding, "gist")
+
+            for obs_id in gist.source_observation_ids:
+                self._add_edge(Edge(
+                    source_id=gist.id,
+                    target_id=obs_id,
+                    edge_type=EdgeType.SUMMARIZES,
+                ))
+
+            self._db.commit()
+        return gist.id
+
+    def _add_edge(self, edge):
+        # type: (Edge) -> str
+        self._db.execute(
+            "INSERT OR REPLACE INTO edges (id, source_id, target_id, edge_type, metadata) VALUES (?, ?, ?, ?, ?)",
+            (edge.id, edge.source_id, edge.target_id, edge.edge_type.value, json.dumps(edge.metadata)),
+        )
+        return edge.id
+
+    def update_observation_tiers(self, obs_ids, tier, drop_text=False):
+        # type: (List[str], str, bool) -> None
+        """Batch update tier for multiple observations in a single transaction.
+
+        :param obs_ids: Observation IDs to update.
+        :param tier: Target tier value.
+        :param drop_text: If ``True``, clear text and remove from HNSW/spatial indexes.
+        """
+        with self._lock:
+            for obs_id in obs_ids:
+                if drop_text:
+                    self._db.execute(
+                        "UPDATE observations SET tier = ?, text = '' WHERE id = ?",
+                        (tier, obs_id),
+                    )
+                    self._remove_from_hnsw(obs_id)
+                    row = self._db.execute("SELECT x, y, z FROM observations WHERE id = ?", (obs_id,)).fetchone()
+                    if row:
+                        self._spatial.delete(obs_id, np.array([row["x"], row["y"], row["z"]]))
+                else:
+                    self._db.execute(
+                        "UPDATE observations SET tier = ? WHERE id = ?",
+                        (tier, obs_id),
+                    )
+            self._db.commit()
+
+    def update_observation_tier(self, obs_id, tier, drop_text=False):
+        # type: (str, str, bool) -> None
+        self.update_observation_tiers([obs_id], tier, drop_text)
+
+    # ── Read Operations ───────────────────────────────────────────────
+
+    def _row_to_observation(self, row):
+        # type: (sqlite3.Row) -> ObservationNode
+        return ObservationNode(
+            id=row["id"],
+            text=row["text"],
+            coordinates=np.array([row["x"], row["y"], row["z"]]),
+            timestamp=row["timestamp"],
+            layer_name=row["layer_name"],
+            source_type=row["source_type"],
+            confidence=row["confidence"],
+            episode_id=row["episode_id"],
+            metadata=json.loads(row["metadata"]),
+            tier=row["tier"],
+        )
+
+    def _row_to_episode(self, row):
+        # type: (sqlite3.Row) -> EpisodeNode
+        return EpisodeNode(
+            id=row["id"],
+            name=row["name"],
+            start_time=row["start_time"],
+            end_time=row["end_time"],
+            status=row["status"],
+            gist=row["gist"],
+            parent_episode_id=row["parent_episode_id"],
+            metadata=json.loads(row["metadata"]),
+        )
+
+    def _row_to_gist(self, row):
+        # type: (sqlite3.Row) -> GistNode
+        return GistNode(
+            id=row["id"],
+            text=row["text"],
+            center_position=np.array([row["cx"], row["cy"], row["cz"]]),
+            radius=row["radius"],
+            time_start=row["time_start"],
+            time_end=row["time_end"],
+            source_observation_count=row["source_observation_count"],
+            source_observation_ids=json.loads(row["source_observation_ids"]),
+            layer_name=row["layer_name"],
+            episode_id=row["episode_id"],
+        )
+
+    def get_observation(self, obs_id):
+        # type: (str) -> Optional[ObservationNode]
+        row = self._db.execute("SELECT * FROM observations WHERE id = ?", (obs_id,)).fetchone()
+        return self._row_to_observation(row) if row else None
+
+    def get_episode(self, episode_id):
+        # type: (str) -> Optional[EpisodeNode]
+        row = self._db.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchone()
+        return self._row_to_episode(row) if row else None
+
+    def get_gist(self, gist_id):
+        # type: (str) -> Optional[GistNode]
+        row = self._db.execute("SELECT * FROM gists WHERE id = ?", (gist_id,)).fetchone()
+        return self._row_to_gist(row) if row else None
+
+    def get_episode_observations(self, episode_id):
+        # type: (str) -> List[ObservationNode]
+        rows = self._db.execute(
+            "SELECT * FROM observations WHERE episode_id = ? ORDER BY timestamp",
+            (episode_id,),
+        ).fetchall()
+        return [self._row_to_observation(r) for r in rows]
+
+    def list_episodes(
+        self,
+        task_name=None,   # type: Optional[str]
+        time_range=None,  # type: Optional[Tuple[float, float]]
+        last_n=None,      # type: Optional[int]
+        status=None,      # type: Optional[str]
+    ):
+        # type: (...) -> List[EpisodeNode]
+        query = "SELECT * FROM episodes WHERE 1=1"
+        params = []  # type: list
+        if task_name:
+            query += " AND name LIKE ?"
+            params.append("%%%s%%" % task_name)
+        if time_range:
+            query += " AND start_time >= ? AND (end_time IS NULL OR end_time <= ?)"
+            params.append(time_range[0])
+            params.append(time_range[1])
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY start_time DESC"
+        if last_n:
+            query += " LIMIT ?"
+            params.append(last_n)
+        rows = self._db.execute(query, params).fetchall()
+        return [self._row_to_episode(r) for r in rows]
+
+    # ── Query Operations ──────────────────────────────────────────────
+
+    def semantic_search(
+        self,
+        query,            # type: str
+        n_results=5,      # type: int
+        layer=None,       # type: Optional[str]
+        time_range=None,  # type: Optional[Tuple[float, float]]
+        spatial_center=None,   # type: Optional[np.ndarray]
+        spatial_radius=None,   # type: Optional[float]
+        episode_id=None,  # type: Optional[str]
+    ):
+        # type: (...) -> List[Union[ObservationNode, GistNode]]
+        """Search by meaning across observations and consolidated gists.
+
+        :param query: Natural language query string.
+        :param n_results: Maximum results to return.
+        :param layer: Filter by layer name.
+        :param time_range: ``(start, end)`` timestamp bounds.
+        :param spatial_center: Centre point for spatial filter.
+        :param spatial_radius: Radius for spatial filter.
+        :param episode_id: Filter by episode.
+        :returns: Ranked list of observations and/or gists.
+        :rtype: List[Union[ObservationNode, GistNode]]
+        """
+        query_emb = self.embedding_provider.embed([query])[0]
+        return self.semantic_search_by_vector(
+            query_emb, n_results, layer, time_range, spatial_center, spatial_radius, episode_id
+        )
+
+    def semantic_search_by_vector(
+        self,
+        query_vector,     # type: np.ndarray
+        n_results=5,      # type: int
+        layer=None,       # type: Optional[str]
+        time_range=None,  # type: Optional[Tuple[float, float]]
+        spatial_center=None,   # type: Optional[np.ndarray]
+        spatial_radius=None,   # type: Optional[float]
+        episode_id=None,  # type: Optional[str]
+    ):
+        # type: (...) -> List[Union[ObservationNode, GistNode]]
+        """Search by embedding vector across observations and consolidated gists.
+
+        :param query_vector: Embedding vector to search with.
+        :param n_results: Maximum results to return.
+        :param layer: Filter by layer name.
+        :param time_range: ``(start, end)`` timestamp bounds.
+        :param spatial_center: Centre point for spatial filter.
+        :param spatial_radius: Radius for spatial filter.
+        :param episode_id: Filter by episode.
+        :returns: Ranked list of observations and/or gists.
+        :rtype: List[Union[ObservationNode, GistNode]]
+        """
+        if self._hnsw.get_current_count() == 0:
+            return []
+
+        # Number of live (non-deleted) elements
+        live_count = len(self._hnsw_id_map)
+        if live_count == 0:
+            return []
+        fetch_k = min(n_results * 5, live_count)
+        labels, distances = self._hnsw.knn_query(query_vector.reshape(1, -1), k=fetch_k)
+
+        candidate_ids = []
+        for label in labels[0]:
+            str_id = self._hnsw_id_map.get(int(label))
+            if str_id:
+                candidate_ids.append(str_id)
+
+        if not candidate_ids:
+            return []
+
+        # Partition candidates by node type
+        placeholders = ",".join("?" * len(candidate_ids))
+        type_rows = self._db.execute(
+            "SELECT str_id, node_type FROM hnsw_mappings WHERE str_id IN (%s)" % placeholders,
+            candidate_ids,
+        ).fetchall()
+        type_map = {r["str_id"]: r["node_type"] for r in type_rows}
+
+        obs_ids = [cid for cid in candidate_ids if type_map.get(cid) == "observation"]
+        gist_ids = [cid for cid in candidate_ids if type_map.get(cid) == "gist"]
+
+        results = []  # type: List[Union[ObservationNode, GistNode]]
+
+        # Query observations
+        if obs_ids:
+            obs_ph = ",".join("?" * len(obs_ids))
+            obs_sql = "SELECT * FROM observations WHERE id IN (%s)" % obs_ph
+            obs_params = list(obs_ids)  # type: list
+
+            if layer:
+                obs_sql += " AND layer_name = ?"
+                obs_params.append(layer)
+            if time_range:
+                obs_sql += " AND timestamp >= ? AND timestamp <= ?"
+                obs_params.extend(time_range)
+            if episode_id:
+                obs_sql += " AND episode_id = ?"
+                obs_params.append(episode_id)
+            if spatial_center is not None and spatial_radius is not None:
+                x, y, z = _to_xyz(spatial_center)
+                obs_sql += " AND ((x - ?) * (x - ?) + (y - ?) * (y - ?) + (z - ?) * (z - ?)) <= ?"
+                obs_params.extend([x, x, y, y, z, z, spatial_radius ** 2])
+
+            obs_sql += " AND tier != 'archived'"
+
+            rows = self._db.execute(obs_sql, obs_params).fetchall()
+            results.extend(self._row_to_observation(r) for r in rows)
+
+        # Query gists
+        if gist_ids:
+            gist_ph = ",".join("?" * len(gist_ids))
+            gist_sql = "SELECT * FROM gists WHERE id IN (%s)" % gist_ph
+            gist_params = list(gist_ids)  # type: list
+
+            if layer:
+                gist_sql += " AND layer_name = ?"
+                gist_params.append(layer)
+            if time_range:
+                gist_sql += " AND time_start <= ? AND time_end >= ?"
+                # Gist overlaps time range if gist.time_start <= range_end AND gist.time_end >= range_start
+                gist_params.extend([time_range[1], time_range[0]])
+            if episode_id:
+                gist_sql += " AND episode_id = ?"
+                gist_params.append(episode_id)
+            if spatial_center is not None and spatial_radius is not None:
+                x, y, z = _to_xyz(spatial_center)
+                gist_sql += " AND ((cx - ?) * (cx - ?) + (cy - ?) * (cy - ?) + (cz - ?) * (cz - ?)) <= ?"
+                gist_params.extend([x, x, y, y, z, z, spatial_radius ** 2])
+
+            rows = self._db.execute(gist_sql, gist_params).fetchall()
+            results.extend(self._row_to_gist(r) for r in rows)
+
+        # Preserve HNSW distance ordering
+        id_order = {sid: i for i, sid in enumerate(candidate_ids)}
+        results.sort(key=lambda item: id_order.get(item.id, 9999))
+        return results[:n_results]
+
+    def spatial_query(
+        self,
+        center,           # type: np.ndarray
+        radius,           # type: float
+        layer=None,       # type: Optional[str]
+        time_range=None,  # type: Optional[Tuple[float, float]]
+        n_results=10,     # type: int
+    ):
+        # type: (...) -> List[ObservationNode]
+        """Find observations within a radius of a point.
+
+        :param center: 3D coordinate array.
+        :param radius: Search radius in metres.
+        :param layer: Filter by layer name.
+        :param time_range: ``(start, end)`` timestamp bounds.
+        :param n_results: Maximum results to return.
+        :returns: Observations sorted by distance from *center*.
+        :rtype: List[ObservationNode]
+        """
+        candidate_ids = self._spatial.query_radius(center, radius)
+        if not candidate_ids:
+            return []
+
+        placeholders = ",".join("?" * len(candidate_ids))
+        query = "SELECT * FROM observations WHERE id IN (%s) AND tier != 'archived'" % placeholders
+        params = list(candidate_ids)  # type: list
+
+        if layer:
+            query += " AND layer_name = ?"
+            params.append(layer)
+        if time_range:
+            query += " AND timestamp >= ? AND timestamp <= ?"
+            params.extend(time_range)
+
+        rows = self._db.execute(query, params).fetchall()
+        results = [self._row_to_observation(r) for r in rows]
+
+        # Sort by distance from center in Python (avoids f-string in SQL)
+        cx, cy, cz = _to_xyz(center)
+        center_pt = np.array([cx, cy, cz])
+        results.sort(key=lambda o: float(np.sum((o.coordinates - center_pt) ** 2)))
+        return results[:n_results]
+
+    def spatial_nearest(self, point, k=5):
+        # type: (np.ndarray, int) -> List[ObservationNode]
+        """Find *k* nearest observations to *point*.
+
+        :param point: 3D coordinate array.
+        :param k: Number of nearest neighbours.
+        :returns: Observations sorted by distance.
+        :rtype: List[ObservationNode]
+        """
+        candidate_ids = self._spatial.query_nearest(point, k=k * 2)
+        if not candidate_ids:
+            return []
+        placeholders = ",".join("?" * len(candidate_ids))
+        rows = self._db.execute(
+            "SELECT * FROM observations WHERE id IN (%s) AND tier != 'archived'" % placeholders,
+            candidate_ids,
+        ).fetchall()
+        results = [self._row_to_observation(r) for r in rows]
+        px, py, pz = _to_xyz(point)
+        pt = np.array([px, py, pz])
+        results.sort(key=lambda o: float(np.sum((o.coordinates - pt) ** 2)))
+        return results[:k]
+
+    def temporal_query(
+        self,
+        time_range=None,       # type: Optional[Tuple[float, float]]
+        last_n_seconds=None,   # type: Optional[float]
+        layer=None,            # type: Optional[str]
+        spatial_center=None,   # type: Optional[np.ndarray]
+        spatial_radius=None,   # type: Optional[float]
+        order="newest",        # type: str
+        n_results=10,          # type: int
+        reference_time=None,   # type: Optional[float]
+    ):
+        # type: (...) -> List[ObservationNode]
+        """Find observations in a time range.
+
+        :param time_range: ``(start, end)`` timestamp bounds.
+        :param last_n_seconds: Alternative to *time_range*; seconds before *reference_time*.
+        :param layer: Filter by layer name.
+        :param spatial_center: Centre point for spatial filter.
+        :param spatial_radius: Radius for spatial filter.
+        :param order: ``"newest"`` or ``"oldest"``.
+        :param n_results: Maximum results to return.
+        :param reference_time: Reference timestamp for *last_n_seconds*.
+        :returns: Observations in chronological order.
+        :rtype: List[ObservationNode]
+        """
+        query = "SELECT * FROM observations WHERE tier != 'archived'"
+        params = []  # type: list
+
+        if time_range:
+            query += " AND timestamp >= ? AND timestamp <= ?"
+            params.extend(time_range)
+        elif last_n_seconds and reference_time:
+            query += " AND timestamp >= ?"
+            params.append(reference_time - last_n_seconds)
+
+        if layer:
+            query += " AND layer_name = ?"
+            params.append(layer)
+        if spatial_center is not None and spatial_radius is not None:
+            x, y, z = _to_xyz(spatial_center)
+            query += " AND ((x - ?) * (x - ?) + (y - ?) * (y - ?) + (z - ?) * (z - ?)) <= ?"
+            params.extend([x, x, y, y, z, z, spatial_radius ** 2])
+
+        order_dir = "DESC" if order == "newest" else "ASC"
+        query += " ORDER BY timestamp %s LIMIT ?" % order_dir
+        params.append(n_results)
+
+        rows = self._db.execute(query, params).fetchall()
+        return [self._row_to_observation(r) for r in rows]
+
+    def search_gists(
+        self,
+        query,            # type: str
+        n_results=5,      # type: int
+        time_range=None,  # type: Optional[Tuple[float, float]]
+    ):
+        # type: (...) -> List[GistNode]
+        """Search consolidated gist summaries by meaning.
+
+        :param query: Natural language query string.
+        :param n_results: Maximum results to return.
+        :param time_range: ``(start, end)`` timestamp bounds.
+        :returns: Ranked list of gists.
+        :rtype: List[GistNode]
+        """
+        query_emb = self.embedding_provider.embed([query])[0]
+        if self._hnsw.get_current_count() == 0:
+            return []
+
+        fetch_k = min(n_results * 5, self._hnsw.get_current_count())
+        labels, distances = self._hnsw.knn_query(query_emb.reshape(1, -1), k=fetch_k)
+
+        candidate_ids = []
+        for label in labels[0]:
+            str_id = self._hnsw_id_map.get(int(label))
+            if str_id:
+                candidate_ids.append(str_id)
+
+        if not candidate_ids:
+            return []
+
+        placeholders = ",".join("?" * len(candidate_ids))
+        query_sql = "SELECT * FROM gists WHERE id IN (%s)" % placeholders
+        params = list(candidate_ids)  # type: list
+
+        if time_range:
+            query_sql += " AND time_start >= ? AND time_end <= ?"
+            params.extend(time_range)
+
+        rows = self._db.execute(query_sql, params).fetchall()
+        results = [self._row_to_gist(r) for r in rows]
+        id_order = {sid: i for i, sid in enumerate(candidate_ids)}
+        results.sort(key=lambda g: id_order.get(g.id, 9999))
+        return results[:n_results]
+
+    def search_gists_by_area(
+        self,
+        center,       # type: np.ndarray
+        radius,       # type: float
+        n_results=5,  # type: int
+    ):
+        # type: (...) -> List[GistNode]
+        """Find gists whose centre falls within *radius* of *center*.
+
+        :param center: 3D coordinate array.
+        :param radius: Search radius in metres.
+        :param n_results: Maximum results to return.
+        :returns: Matching gists.
+        :rtype: List[GistNode]
+        """
+        x, y, z = _to_xyz(center)
+        rows = self._db.execute(
+            """SELECT * FROM gists
+               WHERE ((cx-?)*(cx-?) + (cy-?)*(cy-?) + (cz-?)*(cz-?)) <= ?
+               LIMIT ?""",
+            (x, x, y, y, z, z, radius ** 2, n_results),
+        ).fetchall()
+        return [self._row_to_gist(r) for r in rows]
+
+    def get_observations_for_consolidation(self, older_than, tier=Tier.SHORT_TERM.value):
+        # type: (float, str) -> List[ObservationNode]
+        """Fetch observations eligible for time-window consolidation.
+
+        :param older_than: Timestamp cutoff; observations older than this are returned.
+        :param tier: Only consider observations in this tier.
+        :returns: Observations ordered by timestamp.
+        :rtype: List[ObservationNode]
+        """
+        rows = self._db.execute(
+            "SELECT * FROM observations WHERE tier = ? AND timestamp < ? ORDER BY timestamp",
+            (tier, older_than),
+        ).fetchall()
+        return [self._row_to_observation(r) for r in rows]
+
+    def get_edges(self, source_id=None, target_id=None, edge_type=None):
+        # type: (Optional[str], Optional[str], Optional[EdgeType]) -> List[Edge]
+        query = "SELECT * FROM edges WHERE 1=1"
+        params = []  # type: list
+        if source_id:
+            query += " AND source_id = ?"
+            params.append(source_id)
+        if target_id:
+            query += " AND target_id = ?"
+            params.append(target_id)
+        if edge_type:
+            query += " AND edge_type = ?"
+            params.append(edge_type.value)
+        rows = self._db.execute(query, params).fetchall()
+        return [Edge(
+            id=r["id"], source_id=r["source_id"], target_id=r["target_id"],
+            edge_type=EdgeType(r["edge_type"]), metadata=json.loads(r["metadata"]),
+        ) for r in rows]
+
+    def count_observations(self, tier=None):
+        # type: (Optional[str]) -> int
+        if tier:
+            return self._db.execute("SELECT COUNT(*) FROM observations WHERE tier = ?", (tier,)).fetchone()[0]
+        return self._db.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
+
+    def save(self):
+        # type: () -> None
+        """Persist HNSW index to disk."""
+        self._hnsw.save_index(str(self._hnsw_path))
+        self._db.commit()
+
+    def close(self):
+        # type: () -> None
+        self.save()
+        self._db.close()

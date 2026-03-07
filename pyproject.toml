@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "emem"
+version = "0.1.0"
+description = "Hybrid graph-based spatio-temporal memory system for embodied agents"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "All rights reserved. Copyright (c) 2024 Automatika Robotics."}
+dependencies = [
+    "numpy>=1.24",
+    "hnswlib>=0.8",
+    "Rtree>=1.0",
+    "scikit-learn>=1.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+embeddings = [
+    "sentence-transformers>=2.2",
+]
+
+[tool.setuptools.packages.find]
+include = ["emem*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

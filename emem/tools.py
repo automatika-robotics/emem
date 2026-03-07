@@ -1,0 +1,397 @@
+import re
+import time
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+import numpy as np
+
+from emem.store import MemoryStore
+from emem.types import GistNode
+
+
+def _parse_relative_time(value, reference_time=None):
+    # type: (str, Optional[float]) -> float
+    """Parse relative time strings like ``'-10m'``, ``'-1h'``, ``'-2d'``
+    into absolute timestamps.
+
+    :param value: Time string or numeric timestamp.
+    :param reference_time: Reference point for relative values.
+    :returns: Absolute timestamp as float.
+    :rtype: float
+    """
+    ref = reference_time or time.time()
+    match = re.match(r"^-(\d+(?:\.\d+)?)\s*([smhd])$", value.strip())
+    if not match:
+        return float(value)
+    amount = float(match.group(1))
+    unit = match.group(2)
+    multiplier = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    return ref - amount * multiplier[unit]
+
+
+def _format_observation(obs, include_coords=True):
+    # type: (Any, bool) -> str
+    parts = [f"[{obs.layer_name}]"]
+    if include_coords:
+        c = obs.coordinates
+        parts.append(f"({c[0]:.1f},{c[1]:.1f})")
+    parts.append(obs.text)
+    return " ".join(parts)
+
+
+def _format_memory_result(item, include_coords=True):
+    # type: (Any, bool) -> str
+    if isinstance(item, GistNode):
+        pos = item.center_position
+        return (
+            f"[gist/{item.layer_name or 'cross-layer'}] "
+            f"({pos[0]:.1f},{pos[1]:.1f}) "
+            f"[{item.source_observation_count} obs] {item.text}"
+        )
+    return _format_observation(item, include_coords)
+
+
+def _format_observations(observations, include_coords=True):
+    # type: (list, bool) -> str
+    if not observations:
+        return "No observations found."
+    lines = []
+    for i, obs in enumerate(observations, 1):
+        lines.append(f"{i}. {_format_observation(obs, include_coords)}")
+    return "\n".join(lines)
+
+
+def _format_results(results, include_coords=True):
+    # type: (list, bool) -> str
+    if not results:
+        return "No results found."
+    lines = []
+    for i, item in enumerate(results, 1):
+        lines.append(f"{i}. {_format_memory_result(item, include_coords)}")
+    return "\n".join(lines)
+
+
+class MemoryTools:
+    """LLM tool interface providing six memory query tools.
+
+    Each tool method returns a formatted string for token-efficient LLM
+    consumption.
+    """
+
+    _TOOL_NAMES = frozenset({
+        "semantic_search", "spatial_query", "temporal_query",
+        "episode_summary", "get_current_context", "search_gists",
+    })
+
+    def __init__(self, store, get_current_time=None, get_current_position=None):
+        # type: (MemoryStore, Optional[Callable[[], float]], Optional[Callable]) -> None
+        self.store = store
+        self._get_time = get_current_time or time.time
+        self._get_position = get_current_position
+
+    def _resolve_time(self, value):
+        # type: (Optional[str]) -> Optional[float]
+        if value is None:
+            return None
+        return _parse_relative_time(value, self._get_time())
+
+    def _time_range(self, time_after, time_before):
+        # type: (Optional[str], Optional[str]) -> Optional[Tuple[float, float]]
+        after = self._resolve_time(time_after)
+        before = self._resolve_time(time_before)
+        if after is None and before is None:
+            return None
+        return (after or 0.0, before or self._get_time())
+
+    # ── Tool 1: Semantic Search ───────────────────────────────────────
+
+    def semantic_search(
+        self,
+        query,                   # type: str
+        n_results=5,             # type: int
+        layer=None,              # type: Optional[str]
+        time_after=None,         # type: Optional[str]
+        time_before=None,        # type: Optional[str]
+        near_x=None,             # type: Optional[float]
+        near_y=None,             # type: Optional[float]
+        spatial_radius=None,     # type: Optional[float]
+        episode_id=None,         # type: Optional[str]
+    ):
+        # type: (...) -> str
+        spatial_center = None
+        if near_x is not None and near_y is not None:
+            spatial_center = np.array([near_x, near_y, 0.0])
+
+        results = self.store.semantic_search(
+            query=query,
+            n_results=n_results,
+            layer=layer,
+            time_range=self._time_range(time_after, time_before),
+            spatial_center=spatial_center,
+            spatial_radius=spatial_radius,
+            episode_id=episode_id,
+        )
+        return _format_results(results)
+
+    # ── Tool 2: Spatial Query ─────────────────────────────────────────
+
+    def spatial_query(
+        self,
+        x,                   # type: float
+        y,                   # type: float
+        z=0.0,               # type: float
+        radius=2.0,          # type: float
+        layer=None,          # type: Optional[str]
+        time_after=None,     # type: Optional[str]
+        time_before=None,    # type: Optional[str]
+        n_results=10,        # type: int
+    ):
+        # type: (...) -> str
+        results = self.store.spatial_query(
+            center=np.array([x, y, z]),
+            radius=radius,
+            layer=layer,
+            time_range=self._time_range(time_after, time_before),
+            n_results=n_results,
+        )
+        return _format_observations(results)
+
+    # ── Tool 3: Temporal Query ────────────────────────────────────────
+
+    def temporal_query(
+        self,
+        time_after=None,         # type: Optional[str]
+        time_before=None,        # type: Optional[str]
+        last_n_minutes=None,     # type: Optional[float]
+        layer=None,              # type: Optional[str]
+        near_x=None,             # type: Optional[float]
+        near_y=None,             # type: Optional[float]
+        spatial_radius=None,     # type: Optional[float]
+        order="newest",          # type: str
+        n_results=10,            # type: int
+    ):
+        # type: (...) -> str
+        spatial_center = None
+        if near_x is not None and near_y is not None:
+            spatial_center = np.array([near_x, near_y, 0.0])
+
+        last_n_seconds = last_n_minutes * 60 if last_n_minutes else None
+
+        results = self.store.temporal_query(
+            time_range=self._time_range(time_after, time_before),
+            last_n_seconds=last_n_seconds,
+            layer=layer,
+            spatial_center=spatial_center,
+            spatial_radius=spatial_radius,
+            order=order,
+            n_results=n_results,
+            reference_time=self._get_time(),
+        )
+        return _format_observations(results)
+
+    # ── Tool 4: Episode Summary ───────────────────────────────────────
+
+    def episode_summary(
+        self,
+        episode_id=None,   # type: Optional[str]
+        task_name=None,    # type: Optional[str]
+        last_n=1,          # type: int
+    ):
+        # type: (...) -> str
+        if episode_id:
+            ep = self.store.get_episode(episode_id)
+            if not ep:
+                return f"Episode {episode_id} not found."
+            episodes = [ep]
+        else:
+            episodes = self.store.list_episodes(task_name=task_name, last_n=last_n)
+
+        if not episodes:
+            return "No episodes found."
+
+        lines = []
+        for ep in episodes:
+            status = ep.status
+            gist = ep.gist or "(no summary)"
+            line = f"[{ep.name}] ({status}) {gist}"
+            lines.append(line)
+        return "\n".join(lines)
+
+    # ── Tool 5: Current Context ───────────────────────────────────────
+
+    def get_current_context(
+        self,
+        radius=3.0,                    # type: float
+        include_recent_minutes=5.0,    # type: float
+    ):
+        # type: (...) -> str
+        parts = []
+
+        pos = self._get_position() if self._get_position else None
+        if pos is not None:
+            parts.append(f"Position: ({pos[0]:.1f}, {pos[1]:.1f})")
+            nearby = self.store.spatial_query(
+                center=pos, radius=radius, n_results=10,
+            )
+            if nearby:
+                parts.append(f"Nearby ({radius}m):")
+                parts.append(_format_observations(nearby, include_coords=False))
+
+            area_gists = self.store.search_gists_by_area(center=pos, radius=radius)
+            if area_gists:
+                parts.append("Area summaries:")
+                for g in area_gists:
+                    parts.append(f"  - {g.text}")
+
+        recent = self.store.temporal_query(
+            last_n_seconds=include_recent_minutes * 60,
+            n_results=10,
+            reference_time=self._get_time(),
+        )
+        if recent:
+            parts.append(f"Recent ({include_recent_minutes}min):")
+            parts.append(_format_observations(recent))
+
+        return "\n".join(parts) if parts else "No context available."
+
+    # ── Tool 6: Search Gists ─────────────────────────────────────────
+
+    def search_gists(
+        self,
+        query,               # type: str
+        n_results=5,         # type: int
+        time_after=None,     # type: Optional[str]
+        time_before=None,    # type: Optional[str]
+    ):
+        # type: (...) -> str
+        results = self.store.search_gists(
+            query=query,
+            n_results=n_results,
+            time_range=self._time_range(time_after, time_before),
+        )
+        if not results:
+            return "No gists found."
+
+        lines = []
+        for i, g in enumerate(results, 1):
+            pos = g.center_position
+            lines.append(
+                f"{i}. [{g.layer_name or 'cross-layer'}] "
+                f"({pos[0]:.1f},{pos[1]:.1f}) "
+                f"[{g.source_observation_count} obs] {g.text}"
+            )
+        return "\n".join(lines)
+
+    def get_tool_definitions(self):
+        # type: () -> List[Dict[str, Any]]
+        """Return tool definitions suitable for LLM function calling.
+
+        :returns: List of tool definition dicts in OpenAI function-calling format.
+        :rtype: List[Dict[str, Any]]
+        """
+        return [
+            {
+                "name": "semantic_search",
+                "description": "Search memory by meaning. Searches both recent observations and consolidated summaries.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "What to search for"},
+                        "n_results": {"type": "integer", "default": 5},
+                        "layer": {"type": "string", "description": "Filter by layer name"},
+                        "time_after": {"type": "string", "description": "After this time (e.g. '-10m', '-1h')"},
+                        "time_before": {"type": "string", "description": "Before this time"},
+                        "near_x": {"type": "number", "description": "X coordinate to search near"},
+                        "near_y": {"type": "number", "description": "Y coordinate to search near"},
+                        "spatial_radius": {"type": "number", "description": "Radius in meters"},
+                        "episode_id": {"type": "string"},
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "spatial_query",
+                "description": "Find observations within a radius of a point.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "x": {"type": "number"},
+                        "y": {"type": "number"},
+                        "z": {"type": "number", "default": 0.0},
+                        "radius": {"type": "number", "default": 2.0},
+                        "layer": {"type": "string"},
+                        "time_after": {"type": "string"},
+                        "time_before": {"type": "string"},
+                        "n_results": {"type": "integer", "default": 10},
+                    },
+                    "required": ["x", "y"],
+                },
+            },
+            {
+                "name": "temporal_query",
+                "description": "Find observations in a time range, chronologically ordered.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "time_after": {"type": "string"},
+                        "time_before": {"type": "string"},
+                        "last_n_minutes": {"type": "number"},
+                        "layer": {"type": "string"},
+                        "near_x": {"type": "number"},
+                        "near_y": {"type": "number"},
+                        "spatial_radius": {"type": "number"},
+                        "order": {"type": "string", "enum": ["newest", "oldest"], "default": "newest"},
+                        "n_results": {"type": "integer", "default": 10},
+                    },
+                },
+            },
+            {
+                "name": "episode_summary",
+                "description": "Get summary of episode(s).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "episode_id": {"type": "string"},
+                        "task_name": {"type": "string"},
+                        "last_n": {"type": "integer", "default": 1},
+                    },
+                },
+            },
+            {
+                "name": "get_current_context",
+                "description": "Get situational awareness: what's nearby and recent activity.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "radius": {"type": "number", "default": 3.0},
+                        "include_recent_minutes": {"type": "number", "default": 5.0},
+                    },
+                },
+            },
+            {
+                "name": "search_gists",
+                "description": "Search consolidated memory summaries (long-term memory).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "n_results": {"type": "integer", "default": 5},
+                        "time_after": {"type": "string"},
+                        "time_before": {"type": "string"},
+                    },
+                    "required": ["query"],
+                },
+            },
+        ]
+
+    def dispatch_tool_call(self, tool_name, arguments):
+        # type: (str, Dict[str, Any]) -> str
+        """Dispatch a tool call by name.
+
+        :param tool_name: One of the six tool names.
+        :param arguments: Tool arguments dict.
+        :returns: Formatted result string.
+        :rtype: str
+        """
+        if tool_name not in self._TOOL_NAMES:
+            return f"Unknown tool: {tool_name}"
+        return getattr(self, tool_name)(**arguments)

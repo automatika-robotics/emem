@@ -1,0 +1,82 @@
+import uuid
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Dict, List, Optional
+
+import numpy as np
+
+
+class EdgeType(str, Enum):
+    BELONGS_TO = "belongs_to"       # Observation -> Episode
+    FOLLOWS = "follows"             # Episode -> Episode (temporal ordering)
+    SUBTASK_OF = "subtask_of"       # Episode -> Episode (hierarchical)
+    SUMMARIZES = "summarizes"       # Gist -> Observation(s)
+
+
+class Tier(str, Enum):
+    WORKING = "working"
+    SHORT_TERM = "short_term"
+    LONG_TERM = "long_term"
+    ARCHIVED = "archived"
+
+
+class EpisodeStatus(str, Enum):
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    ABANDONED = "abandoned"
+
+
+def _new_id() -> str:
+    return uuid.uuid4().hex
+
+
+@dataclass
+class ObservationNode:
+    text: str
+    coordinates: np.ndarray
+    timestamp: float
+    layer_name: str = "default"
+    source_type: str = "manual"
+    confidence: float = 1.0
+    episode_id: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    tier: str = Tier.SHORT_TERM.value
+    id: str = field(default_factory=_new_id)
+    embedding: Optional[np.ndarray] = None
+
+
+@dataclass
+class EpisodeNode:
+    name: str
+    start_time: float
+    end_time: Optional[float] = None
+    status: str = EpisodeStatus.ACTIVE.value
+    gist: str = ""
+    gist_embedding: Optional[np.ndarray] = None
+    parent_episode_id: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    id: str = field(default_factory=_new_id)
+
+
+@dataclass
+class GistNode:
+    text: str
+    center_position: np.ndarray
+    radius: float
+    time_start: float
+    time_end: float
+    source_observation_count: int
+    source_observation_ids: List[str]
+    layer_name: Optional[str] = None
+    episode_id: Optional[str] = None
+    id: str = field(default_factory=_new_id)
+    embedding: Optional[np.ndarray] = None
+
+
+@dataclass
+class Edge:
+    source_id: str
+    target_id: str
+    edge_type: EdgeType
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    id: str = field(default_factory=_new_id)
