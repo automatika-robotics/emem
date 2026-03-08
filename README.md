@@ -1,5 +1,9 @@
 <p align="center">
-  <h1 align="center">eMEM</h1>
+   <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="_static/eMEM_dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="_static/eMEM_light.png">
+    <img alt="EMOS" src="docs/_static/Emos_light.png" width="50%">
+  </picture>
   <p align="center">
     <strong>Embodied Memory for Situated Agents</strong>
   </p>
