@@ -106,6 +106,43 @@ class SpatioTemporalMemory:
         self._wm.add(obs)
         return obs.id
 
+    def add_body_state(
+        self,
+        text: str,
+        layer_name: str,
+        timestamp: Optional[float] = None,
+        confidence: float = 1.0,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Add a body-state (interoception) observation.
+
+        Automatically sets ``source_type="interoception"`` and uses the
+        robot's current position for coordinates (falls back to the origin
+        if no position has been established yet).
+
+        :param text: Body-state description (e.g. ``"battery: 45%"``).
+        :param layer_name: Interoception layer (e.g. ``"battery"``, ``"cpu_temp"``).
+        :param timestamp: Observation timestamp.  Defaults to current time.
+        :param confidence: Confidence score in ``[0, 1]``.
+        :param metadata: Arbitrary key-value metadata.
+        :returns: Observation ID.
+        :rtype: str
+        """
+        pos = self._wm.current_position
+        if pos is None:
+            pos = np.array([0.0, 0.0, 0.0])
+        return self.add(
+            text=text,
+            x=float(pos[0]),
+            y=float(pos[1]),
+            z=float(pos[2]),
+            timestamp=timestamp,
+            layer_name=layer_name,
+            source_type="interoception",
+            confidence=confidence,
+            metadata=metadata,
+        )
+
     # ── Episodes ──────────────────────────────────────────────────
 
     def start_episode(
@@ -224,6 +261,10 @@ class SpatioTemporalMemory:
         self._ensure_flushed()
         return self._tools.entity_query(**kwargs)
 
+    def body_status(self, **kwargs: Any) -> str:
+        self._ensure_flushed()
+        return self._tools.body_status(**kwargs)
+
     def locate(self, concept: str, **kwargs: Any) -> str:
         self._ensure_flushed()
         return self._tools.locate(concept=concept, **kwargs)
@@ -260,7 +301,7 @@ class SpatioTemporalMemory:
     def dispatch_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Dispatch a tool call by name.  Auto-flushes before executing.
 
-        :param tool_name: One of the nine tool names.
+        :param tool_name: One of the ten tool names.
         :param arguments: Tool arguments dict.
         :returns: Formatted result string.
         :rtype: str

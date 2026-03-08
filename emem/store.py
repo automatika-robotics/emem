@@ -89,6 +89,7 @@ class MemoryStore:
             CREATE INDEX IF NOT EXISTS idx_obs_layer ON observations(layer_name);
             CREATE INDEX IF NOT EXISTS idx_obs_episode ON observations(episode_id);
             CREATE INDEX IF NOT EXISTS idx_obs_tier ON observations(tier);
+            CREATE INDEX IF NOT EXISTS idx_obs_source_type ON observations(source_type);
 
             CREATE TABLE IF NOT EXISTS episodes (
                 id TEXT PRIMARY KEY,
@@ -863,6 +864,8 @@ class MemoryStore:
         layer: Optional[str] = None,
         time_range: Optional[Tuple[float, float]] = None,
         n_results: int = 10,
+        source_type: Optional[str] = None,
+        exclude_source_type: Optional[str] = None,
     ) -> List[ObservationNode]:
         """Find observations within a radius of a point.
 
@@ -888,6 +891,12 @@ class MemoryStore:
         if time_range:
             query += " AND timestamp >= ? AND timestamp <= ?"
             params.extend(time_range)
+        if source_type:
+            query += " AND source_type = ?"
+            params.append(source_type)
+        if exclude_source_type:
+            query += " AND source_type != ?"
+            params.append(exclude_source_type)
 
         rows = self._db.execute(query, params).fetchall()
         results = [self._row_to_observation(r) for r in rows]
@@ -930,6 +939,8 @@ class MemoryStore:
         order: str = "newest",
         n_results: int = 10,
         reference_time: Optional[float] = None,
+        source_type: Optional[str] = None,
+        exclude_source_type: Optional[str] = None,
     ) -> List[ObservationNode]:
         """Find observations in a time range.
 
@@ -957,6 +968,12 @@ class MemoryStore:
         if layer:
             query += " AND layer_name = ?"
             params.append(layer)
+        if source_type:
+            query += " AND source_type = ?"
+            params.append(source_type)
+        if exclude_source_type:
+            query += " AND source_type != ?"
+            params.append(exclude_source_type)
         if spatial_center is not None and spatial_radius is not None:
             clause, dist_params = self._spatial_filter_sql(spatial_center, spatial_radius)
             query += " AND " + clause
@@ -968,6 +985,49 @@ class MemoryStore:
 
         rows = self._db.execute(query, params).fetchall()
         return [self._row_to_observation(r) for r in rows]
+
+    def get_latest_by_source_type(
+        self,
+        source_type: str,
+        layers: Optional[List[str]] = None,
+    ) -> Dict[str, ObservationNode]:
+        """Return the most recent observation per layer for a given source_type.
+
+        :param source_type: Source type to filter on (e.g. ``"interoception"``).
+        :param layers: Optional list of layer names to restrict results.
+        :returns: Dict mapping layer_name to the latest ObservationNode.
+        :rtype: Dict[str, ObservationNode]
+        """
+        query = """
+            SELECT o.* FROM observations o
+            INNER JOIN (
+                SELECT layer_name, MAX(timestamp) AS max_ts
+                FROM observations
+                WHERE source_type = ?
+        """
+        params: list = [source_type]
+        if layers:
+            placeholders = ",".join("?" * len(layers))
+            query += " AND layer_name IN (%s)" % placeholders
+            params.extend(layers)
+        query += """
+                GROUP BY layer_name
+            ) latest ON o.layer_name = latest.layer_name
+                    AND o.timestamp = latest.max_ts
+            WHERE o.source_type = ?
+        """
+        params.append(source_type)
+        if layers:
+            placeholders = ",".join("?" * len(layers))
+            query += " AND o.layer_name IN (%s)" % placeholders
+            params.extend(layers)
+
+        rows = self._db.execute(query, params).fetchall()
+        result: Dict[str, ObservationNode] = {}
+        for r in rows:
+            obs = self._row_to_observation(r)
+            result[obs.layer_name] = obs
+        return result
 
     def search_gists(
         self,

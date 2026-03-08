@@ -47,7 +47,8 @@ class WorkingMemory:
             obs.tier = "working"
             self._buffer.append(obs)
             self._recent.append(obs)
-            self.current_position = obs.coordinates.copy()
+            if obs.source_type != "interoception":
+                self.current_position = obs.coordinates.copy()
 
         if self._should_flush():
             self.flush()

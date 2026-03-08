@@ -94,7 +94,7 @@ def _format_results(results: list, include_coords: bool = True) -> str:
 
 
 class MemoryTools:
-    """LLM tool interface providing nine memory query tools.
+    """LLM tool interface providing ten memory query tools.
 
     Each tool method returns a formatted string for token-efficient LLM
     consumption.
@@ -103,7 +103,7 @@ class MemoryTools:
     _TOOL_NAMES = frozenset({
         "semantic_search", "spatial_query", "temporal_query",
         "episode_summary", "get_current_context", "search_gists",
-        "entity_query", "locate", "recall",
+        "entity_query", "locate", "recall", "body_status",
     })
 
     def __init__(
@@ -173,6 +173,8 @@ class MemoryTools:
         time_after: Optional[str] = None,
         time_before: Optional[str] = None,
         n_results: int = 10,
+        source_type: Optional[str] = None,
+        exclude_source_type: Optional[str] = None,
     ) -> str:
         results = self.store.spatial_query(
             center=np.array([x, y, z]),
@@ -180,6 +182,8 @@ class MemoryTools:
             layer=layer,
             time_range=self._time_range(time_after, time_before),
             n_results=n_results,
+            source_type=source_type,
+            exclude_source_type=exclude_source_type,
         )
         return _format_observations(results)
 
@@ -196,6 +200,8 @@ class MemoryTools:
         spatial_radius: Optional[float] = None,
         order: str = "newest",
         n_results: int = 10,
+        source_type: Optional[str] = None,
+        exclude_source_type: Optional[str] = None,
     ) -> str:
         spatial_center = None
         if near_x is not None and near_y is not None:
@@ -212,6 +218,8 @@ class MemoryTools:
             order=order,
             n_results=n_results,
             reference_time=self._get_time(),
+            source_type=source_type,
+            exclude_source_type=exclude_source_type,
         )
         return _format_observations(results)
 
@@ -284,6 +292,10 @@ class MemoryTools:
         if recent:
             parts.append(f"Recent ({include_recent_minutes}min):")
             parts.append(_format_observations(recent))
+
+        body = self.body_status()
+        if body and "No body state" not in body:
+            parts.append(body)
 
         return "\n".join(parts) if parts else "No context available."
 
@@ -449,6 +461,33 @@ class MemoryTools:
                 )
         return "\n".join(parts)
 
+    # ── Tool 10: Body Status ─────────────────────────────────────────
+
+    def body_status(self, layers: Optional[List[str]] = None) -> str:
+        """Return the latest reading from each interoception layer.
+
+        :param layers: Optional list of layer names to restrict results.
+        :returns: Formatted body status string.
+        :rtype: str
+        """
+        latest = self.store.get_latest_by_source_type("interoception", layers)
+        if not latest:
+            return "No body state data available."
+
+        now = self._get_time()
+        lines = ["Body Status:"]
+        for layer_name in sorted(latest.keys()):
+            obs = latest[layer_name]
+            age_s = now - obs.timestamp
+            if age_s < 60:
+                age_str = f"{age_s:.0f}s ago"
+            elif age_s < 3600:
+                age_str = f"{age_s / 60:.0f}min ago"
+            else:
+                age_str = f"{age_s / 3600:.1f}h ago"
+            lines.append(f"  [{layer_name}] {obs.text} ({age_str})")
+        return "\n".join(lines)
+
     def get_tool_definitions(self) -> List[Dict[str, Any]]:
         """Return tool definitions suitable for LLM function calling.
 
@@ -592,12 +631,26 @@ class MemoryTools:
                     "required": ["query"],
                 },
             },
+            {
+                "name": "body_status",
+                "description": "Get the latest body/internal state readings (battery, temperature, joint health, etc.).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "layers": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Filter to specific body-state layers (e.g. ['battery', 'cpu_temp'])",
+                        },
+                    },
+                },
+            },
         ]
 
     def dispatch_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Dispatch a tool call by name.
 
-        :param tool_name: One of the nine tool names.
+        :param tool_name: One of the ten tool names.
         :param arguments: Tool arguments dict.
         :returns: Formatted result string.
         :rtype: str
