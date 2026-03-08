@@ -34,7 +34,7 @@ Mobile robots and embodied AI agents accumulate thousands of observations per se
 | Temporal queries (when) | SQLite indexed timestamps |
 | Episode structure | Graph edges with hierarchical sub-tasks |
 | Memory consolidation | Automatic gist generation + tiered archival |
-| LLM integration | 6 ready-to-use tool definitions |
+| LLM integration | 10 ready-to-use tool definitions |
 
 Everything runs **fully embedded** -- SQLite, hnswlib, and Rtree -- with zero external services. A single `.db` file and a `.hnsw.bin` file contain the entire memory state.
 
@@ -94,7 +94,7 @@ eMEM is built around three complementary index structures that share a unified n
      +--------+--+   +------+------+  +----+-------+
      |  Working   |  |   Memory    |  | Consolida- |
      |  Memory    |  |   Tools     |  | tion       |
-     |  (buffer)  |  |  (6 tools)  |  | Engine     |
+     |  (buffer)  |  | (10 tools)  |  | Engine     |
      +--------+---+  +------+------+  +----+-------+
               |              |              |
               +--------------+--------------+
@@ -146,7 +146,7 @@ When an episode ends, its observations are automatically consolidated into a **G
 
 ## LLM Tool Interface
 
-eMEM provides 6 tools designed for LLM function-calling. Each returns a token-efficient formatted string.
+eMEM provides 10 tools designed for LLM function-calling. Each returns a token-efficient formatted string.
 
 | Tool | Description |
 |---|---|
@@ -156,6 +156,10 @@ eMEM provides 6 tools designed for LLM function-calling. Each returns a token-ef
 | `episode_summary` | Get summary of one or more episodes |
 | `get_current_context` | Situational awareness: nearby objects, area summaries, recent activity |
 | `search_gists` | Search only consolidated long-term memory |
+| `entity_query` | Find known entities (objects, people, landmarks) by name, type, or location |
+| `locate` | Resolve a concept to a spatial position (returns centroid + radius) |
+| `recall` | Recall everything known about a concept (cross-layer observations, gists, entities) |
+| `body_status` | Get latest body/internal state readings (battery, temperature, joint health) |
 
 ### Using with an LLM Agent
 
@@ -220,6 +224,11 @@ mem.temporal_query(time_after=None, last_n_minutes=None, ...)
 mem.episode_summary(episode_id=None, task_name=None, last_n=1)
 mem.get_current_context(radius=3.0, include_recent_minutes=5.0)
 mem.search_gists(query, n_results=5, ...)
+mem.entity_query(name=None, entity_type=None, near_x=None, ...)
+mem.locate(concept, n_results=10, ...)
+mem.recall(query, n_results=10, ...)
+mem.body_status(layers=None)
+mem.add_body_state(text, layer_name, timestamp=None, confidence=1.0, metadata=None)
 ```
 
 ### Embedding Providers
@@ -302,11 +311,43 @@ mem.semantic_search("person", layer="detections")
 mem.spatial_query(x=5.0, y=5.0, radius=3.0, layer="vlm")
 ```
 
+## Body State / Interoception
+
+eMEM treats internal body state (battery, temperature, joint health) as a first-class memory dimension alongside world observations:
+
+```python
+# Record body state — automatically stamped at the robot's current position
+mem.add_body_state("battery: 45%", layer_name="battery")
+mem.add_body_state("72C across 4 cores", layer_name="cpu_temp")
+mem.add_body_state("all joints nominal", layer_name="joint_health")
+
+# Get latest body state
+print(mem.body_status())
+# Body Status:
+#   [battery] battery: 45% (2min ago)
+#   [cpu_temp] 72C across 4 cores (30s ago)
+#   [joint_health] all joints nominal (5min ago)
+
+# Body state is automatically included in get_current_context()
+print(mem.get_current_context())
+
+# Spatial-interoceptive associations emerge naturally:
+# spatial_query near a steep ramp surfaces both terrain and battery observations
+mem.spatial_query(x=10.0, y=10.0, radius=3.0)
+```
+
+Body state observations flow through the standard ObservationNode pipeline — they participate in episodes, consolidation, and all query tools. The key design decisions:
+
+- **No new node types**: body state uses `ObservationNode` with `source_type="interoception"`
+- **Position-stamped**: body observations inherit the robot's current position
+- **Position-preserving**: body observations do NOT update the robot's tracked position
+- **Peer layers**: `"battery"`, `"cpu_temp"` etc. are regular layer names alongside `"vlm"`, `"detections"`
+
 ## Examples
 
 See the [`examples/`](examples/) directory:
 
-- **[`basic_memory.py`](examples/basic_memory.py)** -- Standalone usage: adding observations, episode lifecycle, all 6 query tools
+- **[`basic_memory.py`](examples/basic_memory.py)** -- Standalone usage: adding observations, episode lifecycle, all query tools
 - **[`memory_agent.py`](examples/memory_agent.py)** -- Simulated LLM agent using memory tools in a ReAct-style loop
 
 ## Development
