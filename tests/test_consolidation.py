@@ -6,7 +6,7 @@ import pytest
 from emem.config import SpatioTemporalMemoryConfig
 from emem.consolidation import ConcatenationSummarizer, ConsolidationEngine
 from emem.store import MemoryStore
-from emem.types import ObservationNode, Tier
+from emem.types import EdgeType, EntityNode, ObservationNode, Tier
 
 
 @pytest.fixture
@@ -114,3 +114,98 @@ class TestSummarizer:
         assert "chair" in result
         assert "table" in result
         assert "noise" in result
+
+
+class FakeEntityExtractor:
+    """Summarizer that also implements extract_entities."""
+
+    def summarize(self, texts):
+        return " | ".join(texts)
+
+    def extract_entities(self, texts):
+        entities = []
+        for text in texts:
+            for word in text.split():
+                if word in ("chair", "table", "lamp"):
+                    entities.append({"name": word, "entity_type": "furniture"})
+        # Deduplicate by name
+        seen = set()
+        result = []
+        for e in entities:
+            if e["name"] not in seen:
+                seen.add(e["name"])
+                result.append(e)
+        return result
+
+
+class TestEntityExtraction:
+    def test_episode_extracts_entities(self, store):
+        config = SpatioTemporalMemoryConfig(
+            consolidation_window=100.0,
+            consolidation_min_samples=2,
+        )
+        engine = ConsolidationEngine(store=store, config=config, llm_client=FakeEntityExtractor())
+
+        ep_id = store.start_episode("test", 1000.0)
+        store.add_observation(_obs("saw a chair", x=5.0, y=5.0, ts=1001.0, episode_id=ep_id))
+        store.add_observation(_obs("saw a table", x=5.5, y=5.5, ts=1002.0, episode_id=ep_id))
+        store.end_episode(ep_id, 1003.0)
+
+        engine.consolidate_episode(ep_id)
+
+        # Entities should have been created
+        entities = store.query_entities()
+        assert len(entities) >= 2
+        names = {e.name for e in entities}
+        assert "chair" in names
+        assert "table" in names
+
+        # OBSERVED_IN edges should exist
+        for ent in entities:
+            edges = store.get_edges(source_id=ent.id, edge_type=EdgeType.OBSERVED_IN)
+            assert len(edges) > 0
+
+        # COOCCURS_WITH edges between chair and table
+        chair_ent = [e for e in entities if e.name == "chair"][0]
+        cooccurring = store.get_cooccurring_entities(chair_ent.id)
+        assert len(cooccurring) >= 1
+
+    def test_no_extraction_without_method(self, store, engine):
+        """When LLMClient lacks extract_entities, no entities are created."""
+        ep_id = store.start_episode("test", 1000.0)
+        store.add_observation(_obs("saw a chair", x=5.0, y=5.0, ts=1001.0, episode_id=ep_id))
+        store.end_episode(ep_id, 1003.0)
+
+        engine.consolidate_episode(ep_id)
+
+        entities = store.query_entities()
+        assert len(entities) == 0
+
+    def test_merge_on_reobservation(self, store):
+        config = SpatioTemporalMemoryConfig(
+            consolidation_window=100.0,
+            consolidation_min_samples=2,
+        )
+        engine = ConsolidationEngine(store=store, config=config, llm_client=FakeEntityExtractor())
+
+        # First episode — creates entity
+        ep1 = store.start_episode("ep1", 1000.0)
+        store.add_observation(_obs("saw a chair", x=5.0, y=5.0, ts=1001.0, episode_id=ep1))
+        store.add_observation(_obs("found a chair", x=5.2, y=5.2, ts=1002.0, episode_id=ep1))
+        store.end_episode(ep1, 1003.0)
+        engine.consolidate_episode(ep1)
+
+        entities_before = store.query_entities(name="chair")
+        assert len(entities_before) == 1
+        count_before = entities_before[0].observation_count
+
+        # Second episode — should merge into existing entity
+        ep2 = store.start_episode("ep2", 2000.0)
+        store.add_observation(_obs("chair still here", x=5.1, y=5.1, ts=2001.0, episode_id=ep2))
+        store.add_observation(_obs("chair looks same", x=5.0, y=5.0, ts=2002.0, episode_id=ep2))
+        store.end_episode(ep2, 2003.0)
+        engine.consolidate_episode(ep2)
+
+        entities_after = store.query_entities(name="chair")
+        assert len(entities_after) == 1
+        assert entities_after[0].observation_count > count_before

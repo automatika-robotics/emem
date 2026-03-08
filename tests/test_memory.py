@@ -126,7 +126,7 @@ class TestToolDispatch:
 
     def test_tool_definitions(self, mem):
         defs = mem.get_tool_definitions()
-        assert len(defs) == 6
+        assert len(defs) == 7
 
 
 class TestContextManager:
@@ -175,3 +175,25 @@ class TestRecent:
         recent = mem.get_recent(3)
         assert len(recent) == 3
         assert recent[-1].text == "obs_4"
+
+
+class TestEntityFacade:
+    def test_add_entity(self, mem):
+        eid = mem.add_entity("red chair", x=5.0, y=5.0, entity_type="furniture")
+        assert eid
+        entity = mem.store.get_entity(eid)
+        assert entity.name == "red chair"
+        assert entity.entity_type == "furniture"
+
+    def test_entity_query(self, mem):
+        mem.add_entity("red chair", x=5.0, y=5.0, entity_type="furniture")
+        mem.add_entity("blue table", x=10.0, y=10.0, entity_type="furniture")
+
+        result = mem.entity_query(name="chair")
+        assert "red chair" in result
+        assert "blue table" not in result
+
+    def test_entity_query_dispatch(self, mem):
+        mem.add_entity("lamp", x=1.0, y=1.0)
+        result = mem.dispatch_tool_call("entity_query", {"name": "lamp"})
+        assert "lamp" in result

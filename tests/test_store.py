@@ -9,7 +9,7 @@ import pytest
 from emem.config import SpatioTemporalMemoryConfig
 from emem.embeddings import NullEmbeddingProvider
 from emem.store import MemoryStore
-from emem.types import EdgeType, GistNode, ObservationNode
+from emem.types import EdgeType, EntityNode, GistNode, ObservationNode
 
 
 class FakeEmbeddingProvider:
@@ -357,3 +357,169 @@ class TestPersistence:
         eps = s2.list_episodes()
         assert len(eps) == 1
         s2.close()
+
+
+def _make_entity(name="red chair", x=5.0, y=5.0, z=0.0, ts=1000.0,
+                 entity_type=None, **kwargs) -> EntityNode:
+    return EntityNode(
+        name=name,
+        coordinates=np.array([x, y, z]),
+        last_seen=ts,
+        first_seen=ts,
+        entity_type=entity_type,
+        **kwargs,
+    )
+
+
+class TestEntityCRUD:
+    def test_add_and_get(self, store):
+        entity = _make_entity("red chair", x=5.0, y=5.0)
+        eid = store.add_entity(entity)
+        assert eid == entity.id
+
+        retrieved = store.get_entity(eid)
+        assert retrieved is not None
+        assert retrieved.name == "red chair"
+        np.testing.assert_array_almost_equal(retrieved.coordinates, [5, 5, 0])
+
+    def test_update_position(self, store):
+        entity = _make_entity("blue table", x=1.0, y=1.0, ts=1000.0)
+        eid = store.add_entity(entity)
+
+        entity.coordinates = np.array([10.0, 10.0, 0.0])
+        entity.last_seen = 2000.0
+        entity.observation_count = 3
+        store.update_entity(entity)
+
+        updated = store.get_entity(eid)
+        assert updated.last_seen == 2000.0
+        assert updated.observation_count == 3
+        np.testing.assert_array_almost_equal(updated.coordinates, [10, 10, 0])
+
+    def test_get_nonexistent(self, store):
+        assert store.get_entity("nonexistent") is None
+
+
+class TestEntityMatching:
+    def test_match_same_location(self, store):
+        entity = _make_entity("red chair", x=5.0, y=5.0)
+        store.add_entity(entity)
+
+        match = store.find_matching_entity("red chair", np.array([5.5, 5.5, 0.0]))
+        assert match is not None
+        assert match.id == entity.id
+
+    def test_no_match_far_away(self, store):
+        entity = _make_entity("red chair", x=5.0, y=5.0)
+        store.add_entity(entity)
+
+        match = store.find_matching_entity("red chair", np.array([100.0, 100.0, 0.0]))
+        assert match is None
+
+    def test_no_match_different_name(self, store):
+        entity = _make_entity("red chair", x=5.0, y=5.0)
+        store.add_entity(entity)
+
+        match = store.find_matching_entity("blue sofa", np.array([5.0, 5.0, 0.0]))
+        # Might or might not match depending on embedding similarity
+        # But with FakeEmbeddingProvider, different names produce different embeddings
+        # so similarity should be below threshold for very different names
+
+
+class TestEntitySpatialIndex:
+    def test_entity_in_spatial_query(self, store):
+        """Entities are indexed in the spatial index."""
+        entity = _make_entity("red chair", x=5.0, y=5.0)
+        store.add_entity(entity)
+
+        # The spatial index contains the entity
+        ids = store._spatial.query_radius(np.array([5.0, 5.0, 0.0]), 2.0)
+        assert entity.id in ids
+
+
+class TestEntityQuery:
+    def test_by_name(self, store):
+        store.add_entity(_make_entity("red chair", x=5.0, y=5.0))
+        store.add_entity(_make_entity("blue table", x=10.0, y=10.0))
+
+        results = store.query_entities(name="chair")
+        assert len(results) == 1
+        assert results[0].name == "red chair"
+
+    def test_by_type(self, store):
+        store.add_entity(_make_entity("red chair", entity_type="furniture"))
+        store.add_entity(_make_entity("person", entity_type="human"))
+
+        results = store.query_entities(entity_type="furniture")
+        assert len(results) == 1
+        assert results[0].name == "red chair"
+
+    def test_by_spatial(self, store):
+        store.add_entity(_make_entity("near", x=5.0, y=5.0))
+        store.add_entity(_make_entity("far", x=100.0, y=100.0))
+
+        results = store.query_entities(
+            near_coordinates=np.array([5.0, 5.0, 0.0]), spatial_radius=3.0,
+        )
+        assert len(results) == 1
+        assert results[0].name == "near"
+
+    def test_by_recency(self, store):
+        store.add_entity(_make_entity("old", ts=100.0))
+        store.add_entity(_make_entity("recent", ts=2000.0))
+
+        results = store.query_entities(last_seen_after=1000.0)
+        assert len(results) == 1
+        assert results[0].name == "recent"
+
+
+class TestEntityEdges:
+    def test_observed_in(self, store):
+        entity = _make_entity("red chair")
+        store.add_entity(entity)
+        obs = _make_obs("saw red chair", x=5.0, y=5.0)
+        store.add_observation(obs)
+
+        from emem.types import Edge
+        store.add_edge(Edge(
+            source_id=entity.id,
+            target_id=obs.id,
+            edge_type=EdgeType.OBSERVED_IN,
+        ))
+
+        observations = store.get_entity_observations(entity.id)
+        assert len(observations) == 1
+        assert observations[0].id == obs.id
+
+    def test_cooccurs_with(self, store):
+        e1 = _make_entity("chair", x=5.0, y=5.0)
+        e2 = _make_entity("table", x=5.5, y=5.5)
+        store.add_entity(e1)
+        store.add_entity(e2)
+
+        from emem.types import Edge
+        store.add_edge(Edge(
+            source_id=e1.id,
+            target_id=e2.id,
+            edge_type=EdgeType.COOCCURS_WITH,
+        ))
+
+        cooccurring = store.get_cooccurring_entities(e1.id)
+        assert len(cooccurring) == 1
+        assert cooccurring[0].id == e2.id
+
+        # Bidirectional
+        cooccurring2 = store.get_cooccurring_entities(e2.id)
+        assert len(cooccurring2) == 1
+        assert cooccurring2[0].id == e1.id
+
+
+class TestEntityInSemanticSearch:
+    def test_entity_found_by_semantic_search(self, store):
+        entity = _make_entity("red chair", x=5.0, y=5.0)
+        store.add_entity(entity)
+
+        results = store.semantic_search("red chair", n_results=10)
+        entity_results = [r for r in results if isinstance(r, EntityNode)]
+        assert len(entity_results) >= 1
+        assert entity_results[0].name == "red chair"

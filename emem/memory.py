@@ -9,7 +9,7 @@ from emem.consolidation import ConsolidationEngine, LLMClient
 from emem.embeddings import EmbeddingProvider
 from emem.store import MemoryStore
 from emem.tools import MemoryTools
-from emem.types import ObservationNode
+from emem.types import EntityNode, ObservationNode
 from emem.working_memory import WorkingMemory
 
 
@@ -35,12 +35,12 @@ class SpatioTemporalMemory:
 
     def __init__(
         self,
-        db_path="memory.db",          # type: str
-        config=None,                   # type: Optional[SpatioTemporalMemoryConfig]
-        embedding_provider=None,       # type: Optional[EmbeddingProvider]
-        llm_client=None,               # type: Optional[LLMClient]
-        get_current_time=None,         # type: Optional[Callable[[], float]]
-    ):
+        db_path: str = "memory.db",
+        config: Optional[SpatioTemporalMemoryConfig] = None,
+        embedding_provider: Optional[EmbeddingProvider] = None,
+        llm_client: Optional[LLMClient] = None,
+        get_current_time: Optional[Callable[[], float]] = None,
+    ) -> None:
         if config is None:
             hnsw_path = str(Path(db_path).with_suffix(".hnsw.bin"))
             config = SpatioTemporalMemoryConfig(db_path=db_path, hnsw_path=hnsw_path)
@@ -63,18 +63,17 @@ class SpatioTemporalMemory:
 
     def add(
         self,
-        text,             # type: str
-        x,                # type: float
-        y,                # type: float
-        z=0.0,            # type: float
-        timestamp=None,   # type: Optional[float]
-        layer_name="default",   # type: str
-        source_type="manual",   # type: str
-        confidence=1.0,   # type: float
-        metadata=None,    # type: Optional[Dict[str, Any]]
-        embedding=None,   # type: Optional[np.ndarray]
-    ):
-        # type: (...) -> str
+        text: str,
+        x: float,
+        y: float,
+        z: float = 0.0,
+        timestamp: Optional[float] = None,
+        layer_name: str = "default",
+        source_type: str = "manual",
+        confidence: float = 1.0,
+        metadata: Optional[Dict[str, Any]] = None,
+        embedding: Optional[np.ndarray] = None,
+    ) -> str:
         """Add an observation.
 
         Observations are buffered and auto-flushed to the store based on
@@ -109,8 +108,12 @@ class SpatioTemporalMemory:
 
     # ── Episodes ──────────────────────────────────────────────────
 
-    def start_episode(self, name, metadata=None, parent_episode_id=None):
-        # type: (str, Optional[Dict[str, Any]], Optional[str]) -> str
+    def start_episode(
+        self,
+        name: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        parent_episode_id: Optional[str] = None,
+    ) -> str:
         """Start a new episode.
 
         All subsequent observations are automatically assigned to this episode
@@ -127,8 +130,7 @@ class SpatioTemporalMemory:
         self._wm.active_episode_id = episode_id
         return episode_id
 
-    def end_episode(self, consolidate=True):
-        # type: (bool) -> Optional[str]
+    def end_episode(self, consolidate: bool = True) -> Optional[str]:
         """End the active episode.
 
         Flushes buffered observations, generates a consolidated gist from
@@ -160,51 +162,71 @@ class SpatioTemporalMemory:
         return ep_id
 
     @property
-    def active_episode_id(self):
-        # type: () -> Optional[str]
+    def active_episode_id(self) -> Optional[str]:
         return self._wm.active_episode_id
 
     # ── Queries (LLM tool interface) ──────────────────────────────
 
-    def _ensure_flushed(self):
-        # type: () -> None
+    def _ensure_flushed(self) -> None:
         if self._wm.buffer_size > 0:
             self._wm.flush()
 
-    def semantic_search(self, query, **kwargs):
-        # type: (str, **Any) -> str
+    def semantic_search(self, query: str, **kwargs: Any) -> str:
         self._ensure_flushed()
         return self._tools.semantic_search(query=query, **kwargs)
 
-    def spatial_query(self, x, y, **kwargs):
-        # type: (float, float, **Any) -> str
+    def spatial_query(self, x: float, y: float, **kwargs: Any) -> str:
         self._ensure_flushed()
         return self._tools.spatial_query(x=x, y=y, **kwargs)
 
-    def temporal_query(self, **kwargs):
-        # type: (**Any) -> str
+    def temporal_query(self, **kwargs: Any) -> str:
         self._ensure_flushed()
         return self._tools.temporal_query(**kwargs)
 
-    def episode_summary(self, **kwargs):
-        # type: (**Any) -> str
+    def episode_summary(self, **kwargs: Any) -> str:
         self._ensure_flushed()
         return self._tools.episode_summary(**kwargs)
 
-    def get_current_context(self, **kwargs):
-        # type: (**Any) -> str
+    def get_current_context(self, **kwargs: Any) -> str:
         self._ensure_flushed()
         return self._tools.get_current_context(**kwargs)
 
-    def search_gists(self, query, **kwargs):
-        # type: (str, **Any) -> str
+    def search_gists(self, query: str, **kwargs: Any) -> str:
         self._ensure_flushed()
         return self._tools.search_gists(query=query, **kwargs)
 
+    def add_entity(
+        self,
+        name: str,
+        x: float,
+        y: float,
+        z: float = 0.0,
+        timestamp: Optional[float] = None,
+        entity_type: Optional[str] = None,
+        confidence: float = 1.0,
+        layer_name: str = "default",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        ts = timestamp or self._get_time()
+        entity = EntityNode(
+            name=name,
+            coordinates=np.array([x, y, z]),
+            last_seen=ts,
+            first_seen=ts,
+            confidence=confidence,
+            entity_type=entity_type,
+            layer_name=layer_name,
+            metadata=metadata or {},
+        )
+        return self._store.add_entity(entity)
+
+    def entity_query(self, **kwargs: Any) -> str:
+        self._ensure_flushed()
+        return self._tools.entity_query(**kwargs)
+
     # ── Consolidation ─────────────────────────────────────────────
 
-    def consolidate_time_window(self):
-        # type: () -> List[str]
+    def consolidate_time_window(self) -> List[str]:
         """Manually trigger time-window consolidation.
 
         Normally you don't need to call this -- episode consolidation happens
@@ -219,8 +241,7 @@ class SpatioTemporalMemory:
 
     # ── Tool dispatch (for LLM integration) ───────────────────────
 
-    def get_tool_definitions(self):
-        # type: () -> List[Dict[str, Any]]
+    def get_tool_definitions(self) -> List[Dict[str, Any]]:
         """Return tool definitions suitable for LLM function calling.
 
         :returns: List of tool definition dicts.
@@ -228,11 +249,10 @@ class SpatioTemporalMemory:
         """
         return self._tools.get_tool_definitions()
 
-    def dispatch_tool_call(self, tool_name, arguments):
-        # type: (str, Dict[str, Any]) -> str
+    def dispatch_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Dispatch a tool call by name.  Auto-flushes before executing.
 
-        :param tool_name: One of the six tool names.
+        :param tool_name: One of the seven tool names.
         :param arguments: Tool arguments dict.
         :returns: Formatted result string.
         :rtype: str
@@ -243,18 +263,15 @@ class SpatioTemporalMemory:
     # ── Programmatic access ───────────────────────────────────────
 
     @property
-    def store(self):
-        # type: () -> MemoryStore
+    def store(self) -> MemoryStore:
         """Direct access to the underlying :class:`~emem.store.MemoryStore`."""
         return self._store
 
     @property
-    def current_position(self):
-        # type: () -> Optional[np.ndarray]
+    def current_position(self) -> Optional[np.ndarray]:
         return self._wm.current_position
 
-    def get_recent(self, n=None):
-        # type: (Optional[int]) -> List[ObservationNode]
+    def get_recent(self, n: Optional[int] = None) -> List[ObservationNode]:
         """Get recent observations from the in-memory buffer.
 
         :param n: Return only the last *n* observations.
@@ -265,13 +282,11 @@ class SpatioTemporalMemory:
 
     # ── Lifecycle ─────────────────────────────────────────────────
 
-    def save(self):
-        # type: () -> None
+    def save(self) -> None:
         self._wm.flush()
         self._store.save()
 
-    def close(self):
-        # type: () -> None
+    def close(self) -> None:
         self._wm.flush()
         self._store.close()
 

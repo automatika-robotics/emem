@@ -5,11 +5,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 
 from emem.store import MemoryStore
-from emem.types import GistNode
+from emem.types import EntityNode, GistNode
 
 
-def _parse_relative_time(value, reference_time=None):
-    # type: (str, Optional[float]) -> float
+def _parse_relative_time(value: str, reference_time: Optional[float] = None) -> float:
     """Parse relative time strings like ``'-10m'``, ``'-1h'``, ``'-2d'``
     into absolute timestamps.
 
@@ -28,8 +27,7 @@ def _parse_relative_time(value, reference_time=None):
     return ref - amount * multiplier[unit]
 
 
-def _format_observation(obs, include_coords=True):
-    # type: (Any, bool) -> str
+def _format_observation(obs: Any, include_coords: bool = True) -> str:
     parts = [f"[{obs.layer_name}]"]
     if include_coords:
         c = obs.coordinates
@@ -38,8 +36,15 @@ def _format_observation(obs, include_coords=True):
     return " ".join(parts)
 
 
-def _format_memory_result(item, include_coords=True):
-    # type: (Any, bool) -> str
+def _format_memory_result(item: Any, include_coords: bool = True) -> str:
+    if isinstance(item, EntityNode):
+        c = item.coordinates
+        type_label = item.entity_type or "object"
+        return (
+            f"[entity/{type_label}] "
+            f"({c[0]:.1f},{c[1]:.1f}) "
+            f"[seen {item.observation_count}x] {item.name}"
+        )
     if isinstance(item, GistNode):
         pos = item.center_position
         return (
@@ -50,8 +55,7 @@ def _format_memory_result(item, include_coords=True):
     return _format_observation(item, include_coords)
 
 
-def _format_observations(observations, include_coords=True):
-    # type: (list, bool) -> str
+def _format_observations(observations: list, include_coords: bool = True) -> str:
     if not observations:
         return "No observations found."
     lines = []
@@ -60,8 +64,7 @@ def _format_observations(observations, include_coords=True):
     return "\n".join(lines)
 
 
-def _format_results(results, include_coords=True):
-    # type: (list, bool) -> str
+def _format_results(results: list, include_coords: bool = True) -> str:
     if not results:
         return "No results found."
     lines = []
@@ -71,7 +74,7 @@ def _format_results(results, include_coords=True):
 
 
 class MemoryTools:
-    """LLM tool interface providing six memory query tools.
+    """LLM tool interface providing seven memory query tools.
 
     Each tool method returns a formatted string for token-efficient LLM
     consumption.
@@ -80,22 +83,29 @@ class MemoryTools:
     _TOOL_NAMES = frozenset({
         "semantic_search", "spatial_query", "temporal_query",
         "episode_summary", "get_current_context", "search_gists",
+        "entity_query",
     })
 
-    def __init__(self, store, get_current_time=None, get_current_position=None):
-        # type: (MemoryStore, Optional[Callable[[], float]], Optional[Callable]) -> None
+    def __init__(
+        self,
+        store: MemoryStore,
+        get_current_time: Optional[Callable[[], float]] = None,
+        get_current_position: Optional[Callable] = None,
+    ) -> None:
         self.store = store
         self._get_time = get_current_time or time.time
         self._get_position = get_current_position
 
-    def _resolve_time(self, value):
-        # type: (Optional[str]) -> Optional[float]
+    def _resolve_time(self, value: Optional[str]) -> Optional[float]:
         if value is None:
             return None
         return _parse_relative_time(value, self._get_time())
 
-    def _time_range(self, time_after, time_before):
-        # type: (Optional[str], Optional[str]) -> Optional[Tuple[float, float]]
+    def _time_range(
+        self,
+        time_after: Optional[str],
+        time_before: Optional[str],
+    ) -> Optional[Tuple[float, float]]:
         after = self._resolve_time(time_after)
         before = self._resolve_time(time_before)
         if after is None and before is None:
@@ -106,17 +116,16 @@ class MemoryTools:
 
     def semantic_search(
         self,
-        query,                   # type: str
-        n_results=5,             # type: int
-        layer=None,              # type: Optional[str]
-        time_after=None,         # type: Optional[str]
-        time_before=None,        # type: Optional[str]
-        near_x=None,             # type: Optional[float]
-        near_y=None,             # type: Optional[float]
-        spatial_radius=None,     # type: Optional[float]
-        episode_id=None,         # type: Optional[str]
-    ):
-        # type: (...) -> str
+        query: str,
+        n_results: int = 5,
+        layer: Optional[str] = None,
+        time_after: Optional[str] = None,
+        time_before: Optional[str] = None,
+        near_x: Optional[float] = None,
+        near_y: Optional[float] = None,
+        spatial_radius: Optional[float] = None,
+        episode_id: Optional[str] = None,
+    ) -> str:
         spatial_center = None
         if near_x is not None and near_y is not None:
             spatial_center = np.array([near_x, near_y, 0.0])
@@ -136,16 +145,15 @@ class MemoryTools:
 
     def spatial_query(
         self,
-        x,                   # type: float
-        y,                   # type: float
-        z=0.0,               # type: float
-        radius=2.0,          # type: float
-        layer=None,          # type: Optional[str]
-        time_after=None,     # type: Optional[str]
-        time_before=None,    # type: Optional[str]
-        n_results=10,        # type: int
-    ):
-        # type: (...) -> str
+        x: float,
+        y: float,
+        z: float = 0.0,
+        radius: float = 2.0,
+        layer: Optional[str] = None,
+        time_after: Optional[str] = None,
+        time_before: Optional[str] = None,
+        n_results: int = 10,
+    ) -> str:
         results = self.store.spatial_query(
             center=np.array([x, y, z]),
             radius=radius,
@@ -159,17 +167,16 @@ class MemoryTools:
 
     def temporal_query(
         self,
-        time_after=None,         # type: Optional[str]
-        time_before=None,        # type: Optional[str]
-        last_n_minutes=None,     # type: Optional[float]
-        layer=None,              # type: Optional[str]
-        near_x=None,             # type: Optional[float]
-        near_y=None,             # type: Optional[float]
-        spatial_radius=None,     # type: Optional[float]
-        order="newest",          # type: str
-        n_results=10,            # type: int
-    ):
-        # type: (...) -> str
+        time_after: Optional[str] = None,
+        time_before: Optional[str] = None,
+        last_n_minutes: Optional[float] = None,
+        layer: Optional[str] = None,
+        near_x: Optional[float] = None,
+        near_y: Optional[float] = None,
+        spatial_radius: Optional[float] = None,
+        order: str = "newest",
+        n_results: int = 10,
+    ) -> str:
         spatial_center = None
         if near_x is not None and near_y is not None:
             spatial_center = np.array([near_x, near_y, 0.0])
@@ -192,11 +199,10 @@ class MemoryTools:
 
     def episode_summary(
         self,
-        episode_id=None,   # type: Optional[str]
-        task_name=None,    # type: Optional[str]
-        last_n=1,          # type: int
-    ):
-        # type: (...) -> str
+        episode_id: Optional[str] = None,
+        task_name: Optional[str] = None,
+        last_n: int = 1,
+    ) -> str:
         if episode_id:
             ep = self.store.get_episode(episode_id)
             if not ep:
@@ -220,10 +226,9 @@ class MemoryTools:
 
     def get_current_context(
         self,
-        radius=3.0,                    # type: float
-        include_recent_minutes=5.0,    # type: float
-    ):
-        # type: (...) -> str
+        radius: float = 3.0,
+        include_recent_minutes: float = 5.0,
+    ) -> str:
         parts = []
 
         pos = self._get_position() if self._get_position else None
@@ -242,6 +247,15 @@ class MemoryTools:
                 for g in area_gists:
                     parts.append(f"  - {g.text}")
 
+            nearby_entities = self.store.query_entities(
+                near_coordinates=pos, spatial_radius=radius, n_results=10,
+            )
+            if nearby_entities:
+                parts.append("Nearby entities:")
+                for ent in nearby_entities:
+                    type_label = ent.entity_type or "object"
+                    parts.append(f"  - [{type_label}] {ent.name} (seen {ent.observation_count}x)")
+
         recent = self.store.temporal_query(
             last_n_seconds=include_recent_minutes * 60,
             n_results=10,
@@ -257,12 +271,11 @@ class MemoryTools:
 
     def search_gists(
         self,
-        query,               # type: str
-        n_results=5,         # type: int
-        time_after=None,     # type: Optional[str]
-        time_before=None,    # type: Optional[str]
-    ):
-        # type: (...) -> str
+        query: str,
+        n_results: int = 5,
+        time_after: Optional[str] = None,
+        time_before: Optional[str] = None,
+    ) -> str:
         results = self.store.search_gists(
             query=query,
             n_results=n_results,
@@ -281,8 +294,42 @@ class MemoryTools:
             )
         return "\n".join(lines)
 
-    def get_tool_definitions(self):
-        # type: () -> List[Dict[str, Any]]
+    # ── Tool 7: Entity Query ───────────────────────────────────────
+
+    def entity_query(
+        self,
+        name: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        near_x: Optional[float] = None,
+        near_y: Optional[float] = None,
+        spatial_radius: Optional[float] = None,
+        last_seen_after: Optional[str] = None,
+        n_results: int = 10,
+    ) -> str:
+        near_coordinates = None
+        if near_x is not None and near_y is not None:
+            near_coordinates = np.array([near_x, near_y, 0.0])
+
+        last_seen_ts = None
+        if last_seen_after is not None:
+            last_seen_ts = _parse_relative_time(last_seen_after, self._get_time())
+
+        results = self.store.query_entities(
+            name=name,
+            entity_type=entity_type,
+            near_coordinates=near_coordinates,
+            spatial_radius=spatial_radius,
+            last_seen_after=last_seen_ts,
+            n_results=n_results,
+        )
+        if not results:
+            return "No entities found."
+        lines = []
+        for i, entity in enumerate(results, 1):
+            lines.append(f"{i}. {_format_memory_result(entity)}")
+        return "\n".join(lines)
+
+    def get_tool_definitions(self) -> List[Dict[str, Any]]:
         """Return tool definitions suitable for LLM function calling.
 
         :returns: List of tool definition dicts in OpenAI function-calling format.
@@ -381,13 +428,28 @@ class MemoryTools:
                     "required": ["query"],
                 },
             },
+            {
+                "name": "entity_query",
+                "description": "Find known entities (objects, people, landmarks). Entities are auto-tracked across observations.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Name substring match"},
+                        "entity_type": {"type": "string", "description": "Type filter (e.g. 'furniture')"},
+                        "near_x": {"type": "number"},
+                        "near_y": {"type": "number"},
+                        "spatial_radius": {"type": "number"},
+                        "last_seen_after": {"type": "string", "description": "e.g. '-10m'"},
+                        "n_results": {"type": "integer", "default": 10},
+                    },
+                },
+            },
         ]
 
-    def dispatch_tool_call(self, tool_name, arguments):
-        # type: (str, Dict[str, Any]) -> str
+    def dispatch_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Dispatch a tool call by name.
 
-        :param tool_name: One of the six tool names.
+        :param tool_name: One of the seven tool names.
         :param arguments: Tool arguments dict.
         :returns: Formatted result string.
         :rtype: str

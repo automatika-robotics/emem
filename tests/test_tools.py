@@ -8,7 +8,7 @@ import pytest
 from emem.config import SpatioTemporalMemoryConfig
 from emem.store import MemoryStore
 from emem.tools import MemoryTools, _parse_relative_time
-from emem.types import GistNode, ObservationNode
+from emem.types import EntityNode, GistNode, ObservationNode
 
 
 class FakeEmbedder:
@@ -221,11 +221,78 @@ class TestDispatch:
 
 
 class TestToolDefinitions:
-    def test_returns_six_tools(self, tools):
+    def test_returns_seven_tools(self, tools):
         defs = tools.get_tool_definitions()
-        assert len(defs) == 6
+        assert len(defs) == 7
         names = {d["name"] for d in defs}
         assert names == {
             "semantic_search", "spatial_query", "temporal_query",
             "episode_summary", "get_current_context", "search_gists",
+            "entity_query",
         }
+
+
+class TestEntityQuery:
+    def test_basic(self, store, tools):
+        entity = EntityNode(
+            name="red chair",
+            coordinates=np.array([5.0, 5.0, 0.0]),
+            last_seen=1500.0,
+            first_seen=1000.0,
+            observation_count=3,
+            entity_type="furniture",
+        )
+        store.add_entity(entity)
+
+        result = tools.entity_query(name="chair")
+        assert "red chair" in result
+        assert "entity/furniture" in result
+        assert "seen 3x" in result
+
+    def test_empty(self, tools):
+        result = tools.entity_query(name="nonexistent")
+        assert "No entities found" in result
+
+    def test_dispatch(self, store, tools):
+        entity = EntityNode(
+            name="blue table",
+            coordinates=np.array([5.0, 5.0, 0.0]),
+            last_seen=1500.0,
+            first_seen=1000.0,
+        )
+        store.add_entity(entity)
+
+        result = tools.dispatch_tool_call("entity_query", {"name": "table"})
+        assert "blue table" in result
+
+    def test_with_spatial_filter(self, store, tools):
+        entity = EntityNode(
+            name="lamp",
+            coordinates=np.array([5.0, 5.0, 0.0]),
+            last_seen=1500.0,
+            first_seen=1000.0,
+        )
+        store.add_entity(entity)
+
+        result = tools.entity_query(near_x=5.0, near_y=5.0, spatial_radius=2.0)
+        assert "lamp" in result
+
+        result2 = tools.entity_query(near_x=100.0, near_y=100.0, spatial_radius=2.0)
+        assert "No entities found" in result2
+
+
+class TestCurrentContextWithEntities:
+    def test_includes_nearby_entities(self, store, tools):
+        entity = EntityNode(
+            name="red chair",
+            coordinates=np.array([5.0, 5.5, 0.0]),
+            last_seen=1500.0,
+            first_seen=1000.0,
+            observation_count=3,
+            entity_type="furniture",
+        )
+        store.add_entity(entity)
+
+        result = tools.get_current_context(radius=3.0)
+        assert "Nearby entities:" in result
+        assert "red chair" in result

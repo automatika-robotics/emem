@@ -4,6 +4,7 @@ from emem.types import (
     ObservationNode,
     EpisodeNode,
     GistNode,
+    EntityNode,
     Edge,
     EdgeType,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "ObservationNode",
     "EpisodeNode",
     "GistNode",
+    "EntityNode",
     "Edge",
     "EdgeType",
     # Low-level (advanced)

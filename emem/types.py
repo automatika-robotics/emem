@@ -11,6 +11,8 @@ class EdgeType(str, Enum):
     FOLLOWS = "follows"             # Episode -> Episode (temporal ordering)
     SUBTASK_OF = "subtask_of"       # Episode -> Episode (hierarchical)
     SUMMARIZES = "summarizes"       # Gist -> Observation(s)
+    OBSERVED_IN = "observed_in"     # Entity -> Observation
+    COOCCURS_WITH = "cooccurs_with" # Entity <-> Entity
 
 
 class Tier(str, Enum):
@@ -69,6 +71,21 @@ class GistNode:
     source_observation_ids: List[str]
     layer_name: Optional[str] = None
     episode_id: Optional[str] = None
+    id: str = field(default_factory=_new_id)
+    embedding: Optional[np.ndarray] = None
+
+
+@dataclass
+class EntityNode:
+    name: str
+    coordinates: np.ndarray
+    last_seen: float
+    first_seen: float
+    observation_count: int = 1
+    confidence: float = 1.0
+    entity_type: Optional[str] = None
+    layer_name: str = "default"
+    metadata: Dict[str, Any] = field(default_factory=dict)
     id: str = field(default_factory=_new_id)
     embedding: Optional[np.ndarray] = None
 

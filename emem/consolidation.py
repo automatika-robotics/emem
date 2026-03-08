@@ -5,12 +5,11 @@ import numpy as np
 
 from emem.config import SpatioTemporalMemoryConfig
 from emem.store import MemoryStore
-from emem.types import GistNode, ObservationNode, Tier
+from emem.types import Edge, EdgeType, EntityNode, GistNode, ObservationNode, Tier
 
 
 class LLMClient(Protocol):
-    def summarize(self, texts):
-        # type: (List[str]) -> str
+    def summarize(self, texts: List[str]) -> str:
         """Summarize a list of text observations into a single gist string.
 
         :param texts: Observation texts to summarize.
@@ -23,8 +22,7 @@ class LLMClient(Protocol):
 class ConcatenationSummarizer:
     """Fallback summarizer that joins texts with ``|``."""
 
-    def summarize(self, texts):
-        # type: (List[str]) -> str
+    def summarize(self, texts: List[str]) -> str:
         return " | ".join(texts)
 
 
@@ -37,14 +35,17 @@ class ConsolidationEngine:
     (:meth:`consolidate_time_window`).
     """
 
-    def __init__(self, store, config=None, llm_client=None):
-        # type: (MemoryStore, Optional[SpatioTemporalMemoryConfig], Optional[LLMClient]) -> None
+    def __init__(
+        self,
+        store: MemoryStore,
+        config: Optional[SpatioTemporalMemoryConfig] = None,
+        llm_client: Optional[LLMClient] = None,
+    ) -> None:
         self.store = store
         self.config = config or SpatioTemporalMemoryConfig()
         self._summarizer = llm_client or ConcatenationSummarizer()
 
-    def consolidate_episode(self, episode_id):
-        # type: (str) -> Optional[str]
+    def consolidate_episode(self, episode_id: str) -> Optional[str]:
         """Generate a gist from all observations in an episode.
 
         :param episode_id: Episode to consolidate.
@@ -58,14 +59,15 @@ class ConsolidationEngine:
         gist = self._create_gist_from_observations(observations, episode_id=episode_id)
         gist_id = self.store.add_gist(gist)
 
+        self._extract_and_merge_entities(observations)
+
         self.store.update_observation_tiers(
             [obs.id for obs in observations], Tier.ARCHIVED.value, drop_text=True,
         )
 
         return gist_id
 
-    def consolidate_time_window(self, reference_time=None):
-        # type: (Optional[float]) -> List[str]
+    def consolidate_time_window(self, reference_time: Optional[float] = None) -> List[str]:
         """Cluster old short-term observations by spatial proximity and
         generate gists.
 
@@ -90,14 +92,15 @@ class ConsolidationEngine:
             gist_id = self.store.add_gist(gist)
             gist_ids.append(gist_id)
 
+            self._extract_and_merge_entities(cluster_obs)
+
             self.store.update_observation_tiers(
                 [obs.id for obs in cluster_obs], Tier.ARCHIVED.value, drop_text=True,
             )
 
         return gist_ids
 
-    def _spatial_cluster(self, observations):
-        # type: (List[ObservationNode]) -> List[List[ObservationNode]]
+    def _spatial_cluster(self, observations: List[ObservationNode]) -> List[List[ObservationNode]]:
         if len(observations) < self.config.consolidation_min_samples:
             return [observations] if observations else []
 
@@ -109,7 +112,7 @@ class ConsolidationEngine:
             min_samples=self.config.consolidation_min_samples,
         ).fit(coords)
 
-        clusters = {}  # type: Dict[int, List[ObservationNode]]
+        clusters: Dict[int, List[ObservationNode]] = {}
         for obs, label in zip(observations, clustering.labels_):
             if label == -1:
                 continue  # Noise — leave in short-term
@@ -117,8 +120,11 @@ class ConsolidationEngine:
 
         return list(clusters.values())
 
-    def _create_gist_from_observations(self, observations, episode_id=None):
-        # type: (List[ObservationNode], Optional[str]) -> GistNode
+    def _create_gist_from_observations(
+        self,
+        observations: List[ObservationNode],
+        episode_id: Optional[str] = None,
+    ) -> GistNode:
         texts = [obs.text for obs in observations if obs.text]
         gist_text = self._summarizer.summarize(texts) if texts else ""
 
@@ -144,3 +150,75 @@ class ConsolidationEngine:
             layer_name=layer_name,
             episode_id=episode_id,
         )
+
+    def _extract_and_merge_entities(self, observations: List[ObservationNode]) -> List[str]:
+        if not hasattr(self._summarizer, "extract_entities"):
+            return []
+
+        texts = [obs.text for obs in observations if obs.text]
+        if not texts:
+            return []
+
+        raw_entities = self._summarizer.extract_entities(texts)
+        if not raw_entities:
+            return []
+
+        coords = np.array([obs.coordinates for obs in observations])
+        centroid = coords.mean(axis=0)
+        timestamps = [obs.timestamp for obs in observations]
+
+        entity_ids: List[str] = []
+        edges: List[Edge] = []
+
+        for raw in raw_entities:
+            name = raw["name"]
+            entity_type = raw.get("entity_type")
+            conf = raw.get("confidence", 1.0)
+
+            existing = self.store.find_matching_entity(name, centroid)
+            if existing:
+                existing.coordinates = centroid
+                existing.last_seen = max(existing.last_seen, max(timestamps))
+                existing.first_seen = min(existing.first_seen, min(timestamps))
+                existing.observation_count += len(observations)
+                existing.confidence = max(existing.confidence, conf)
+                if entity_type and not existing.entity_type:
+                    existing.entity_type = entity_type
+                self.store.update_entity(existing)
+                entity_ids.append(existing.id)
+            else:
+                layers = set(obs.layer_name for obs in observations)
+                layer_name = layers.pop() if len(layers) == 1 else "default"
+                entity = EntityNode(
+                    name=name,
+                    coordinates=centroid,
+                    last_seen=max(timestamps),
+                    first_seen=min(timestamps),
+                    observation_count=len(observations),
+                    confidence=conf,
+                    entity_type=entity_type,
+                    layer_name=layer_name,
+                )
+                self.store.add_entity(entity)
+                entity_ids.append(entity.id)
+
+            # OBSERVED_IN edges
+            for obs in observations:
+                edges.append(Edge(
+                    source_id=entity_ids[-1],
+                    target_id=obs.id,
+                    edge_type=EdgeType.OBSERVED_IN,
+                ))
+
+        # COOCCURS_WITH edges between all entity pairs
+        for i in range(len(entity_ids)):
+            for j in range(i + 1, len(entity_ids)):
+                edges.append(Edge(
+                    source_id=entity_ids[i],
+                    target_id=entity_ids[j],
+                    edge_type=EdgeType.COOCCURS_WITH,
+                ))
+
+        self.store.add_edges(edges)
+
+        return entity_ids

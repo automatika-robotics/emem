@@ -20,6 +20,10 @@ class SpatioTemporalMemoryConfig:
     consolidation_spatial_eps: float = 3.0  # DBSCAN eps in meters
     consolidation_min_samples: int = 3
 
+    # Entity matching
+    entity_similarity_threshold: float = 0.85
+    entity_spatial_radius: float = 5.0
+
     # HNSW parameters
     hnsw_ef_construction: int = 200
     hnsw_m: int = 16
