@@ -221,14 +221,14 @@ class TestDispatch:
 
 
 class TestToolDefinitions:
-    def test_returns_seven_tools(self, tools):
+    def test_returns_nine_tools(self, tools):
         defs = tools.get_tool_definitions()
-        assert len(defs) == 7
+        assert len(defs) == 9
         names = {d["name"] for d in defs}
         assert names == {
             "semantic_search", "spatial_query", "temporal_query",
             "episode_summary", "get_current_context", "search_gists",
-            "entity_query",
+            "entity_query", "locate", "recall",
         }
 
 
@@ -296,3 +296,111 @@ class TestCurrentContextWithEntities:
         result = tools.get_current_context(radius=3.0)
         assert "Nearby entities:" in result
         assert "red chair" in result
+
+
+class TestContextGrouping:
+    def test_groups_nearby_by_layer(self, store, tools):
+        store.add_observation(_obs("white cabinets", x=5.0, y=5.0, ts=1500.0, layer="vlm"))
+        store.add_observation(_obs("chair, table", x=5.0, y=5.0, ts=1500.0, layer="detections"))
+        store.add_observation(_obs("kitchen", x=5.0, y=5.0, ts=1500.0, layer="place"))
+
+        result = tools.get_current_context(radius=3.0)
+        assert "[detections]" in result
+        assert "[vlm]" in result
+        assert "[place]" in result
+        # Verify layer headers appear before their content
+        det_idx = result.index("[detections]")
+        chair_idx = result.index("chair, table")
+        assert det_idx < chair_idx
+
+    def test_single_layer_groups(self, store, tools):
+        store.add_observation(_obs("obs1", x=5.0, y=5.0, ts=1500.0, layer="vlm"))
+        store.add_observation(_obs("obs2", x=5.0, y=5.1, ts=1501.0, layer="vlm"))
+
+        result = tools.get_current_context(radius=3.0)
+        assert "[vlm]" in result
+        assert "obs1" in result
+        assert "obs2" in result
+
+
+class TestLocate:
+    def test_basic_locate(self, store, tools):
+        store.add_observation(_obs("kitchen area", x=10.0, y=10.0, ts=1500.0))
+        store.add_observation(_obs("kitchen counter", x=11.0, y=10.0, ts=1501.0))
+        store.add_observation(_obs("kitchen sink", x=10.0, y=11.0, ts=1502.0))
+
+        result = tools.locate(concept="kitchen")
+        assert "Location:" in result
+        assert "Based on:" in result
+
+    def test_no_results(self, tools):
+        result = tools.locate(concept="nonexistent_place_xyz")
+        assert "Could not locate" in result
+
+    def test_includes_gists(self, store, tools):
+        gist = GistNode(
+            text="Kitchen area with appliances",
+            center_position=np.array([10.0, 10.0, 0.0]),
+            radius=2.0,
+            time_start=1000.0,
+            time_end=1500.0,
+            source_observation_count=3,
+            source_observation_ids=["a", "b", "c"],
+        )
+        store.add_gist(gist)
+
+        result = tools.locate(concept="kitchen appliances")
+        assert "Location:" in result
+
+    def test_dispatch(self, store, tools):
+        store.add_observation(_obs("office desk", x=20.0, y=20.0, ts=1500.0))
+
+        result = tools.dispatch_tool_call("locate", {"concept": "office"})
+        assert "Location:" in result or "Could not locate" in result
+
+
+class TestRecall:
+    def test_basic_recall(self, store, tools):
+        store.add_observation(_obs("kitchen with white cabinets", x=10.0, y=10.0, ts=1500.0, layer="vlm"))
+        store.add_observation(_obs("chair, table, fridge", x=10.0, y=10.0, ts=1500.0, layer="detections"))
+        entity = EntityNode(
+            name="refrigerator",
+            coordinates=np.array([10.0, 10.0, 0.0]),
+            last_seen=1500.0,
+            first_seen=1500.0,
+            observation_count=1,
+            entity_type="appliance",
+        )
+        store.add_entity(entity)
+
+        result = tools.recall(query="kitchen")
+        assert "About 'kitchen'" in result
+        assert "Observations:" in result
+        assert "Entities:" in result
+
+    def test_no_results(self, tools):
+        result = tools.recall(query="nonexistent_xyz")
+        assert "No memories found" in result
+
+    def test_includes_gists(self, store, tools):
+        store.add_observation(_obs("office area", x=20.0, y=20.0, ts=1500.0))
+        gist = GistNode(
+            text="Office area with desks and computers",
+            center_position=np.array([20.0, 20.0, 0.0]),
+            radius=2.0,
+            time_start=1000.0,
+            time_end=1500.0,
+            source_observation_count=5,
+            source_observation_ids=["a", "b", "c", "d", "e"],
+        )
+        store.add_gist(gist)
+
+        result = tools.recall(query="office")
+        assert "About 'office'" in result
+        assert "Summaries:" in result
+
+    def test_dispatch(self, store, tools):
+        store.add_observation(_obs("corridor lights", x=30.0, y=30.0, ts=1500.0))
+
+        result = tools.dispatch_tool_call("recall", {"query": "corridor"})
+        assert "About 'corridor'" in result or "No memories found" in result

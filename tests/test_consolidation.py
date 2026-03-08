@@ -115,6 +115,91 @@ class TestSummarizer:
         assert "table" in result
         assert "noise" in result
 
+    def test_concatenation_synthesize_format(self):
+        s = ConcatenationSummarizer()
+        layer_texts = {
+            "vlm": ["white cabinets", "wooden table"],
+            "detections": ["chair", "table", "fridge"],
+        }
+        result = s.synthesize(layer_texts)
+        assert "[detections]" in result
+        assert "[vlm]" in result
+        assert "||" in result
+        assert "chair" in result
+        assert "white cabinets" in result
+
+
+class TestCrossLayerSynthesis:
+    def _obs_with_layer(self, text, layer, x=1.0, y=1.0, ts=1001.0, episode_id=None):
+        return ObservationNode(
+            text=text,
+            coordinates=np.array([x, y, 0.0]),
+            timestamp=ts,
+            layer_name=layer,
+            episode_id=episode_id,
+        )
+
+    def test_multi_layer_uses_synthesize(self, store):
+        config = SpatioTemporalMemoryConfig(
+            consolidation_window=100.0,
+            consolidation_min_samples=2,
+        )
+        engine = ConsolidationEngine(store=store, config=config)
+
+        ep_id = store.start_episode("test", 1000.0)
+        store.add_observation(self._obs_with_layer("white cabinets", "vlm", ts=1001.0, episode_id=ep_id))
+        store.add_observation(self._obs_with_layer("chair, table", "detections", ts=1002.0, episode_id=ep_id))
+        store.end_episode(ep_id, 1003.0)
+
+        gist_id = engine.consolidate_episode(ep_id)
+        gist = store.get_gist(gist_id)
+        # Should use synthesize format with layer headers
+        assert "[vlm]" in gist.text
+        assert "[detections]" in gist.text
+        assert gist.layer_name is None  # cross-layer
+
+    def test_single_layer_uses_summarize(self, store):
+        config = SpatioTemporalMemoryConfig(
+            consolidation_window=100.0,
+            consolidation_min_samples=2,
+        )
+        engine = ConsolidationEngine(store=store, config=config)
+
+        ep_id = store.start_episode("test", 1000.0)
+        store.add_observation(self._obs_with_layer("saw chair", "vlm", ts=1001.0, episode_id=ep_id))
+        store.add_observation(self._obs_with_layer("saw table", "vlm", ts=1002.0, episode_id=ep_id))
+        store.end_episode(ep_id, 1003.0)
+
+        gist_id = engine.consolidate_episode(ep_id)
+        gist = store.get_gist(gist_id)
+        # Single layer: uses summarize (pipe-separated)
+        assert "saw chair" in gist.text
+        assert "saw table" in gist.text
+        assert gist.layer_name == "vlm"
+
+    def test_fallback_without_synthesize(self, store):
+        class SummarizeOnly:
+            def summarize(self, texts):
+                return " | ".join(texts)
+
+        config = SpatioTemporalMemoryConfig(
+            consolidation_window=100.0,
+            consolidation_min_samples=2,
+        )
+        engine = ConsolidationEngine(store=store, config=config, llm_client=SummarizeOnly())
+
+        ep_id = store.start_episode("test", 1000.0)
+        store.add_observation(self._obs_with_layer("white cabinets", "vlm", ts=1001.0, episode_id=ep_id))
+        store.add_observation(self._obs_with_layer("chair", "detections", ts=1002.0, episode_id=ep_id))
+        store.end_episode(ep_id, 1003.0)
+
+        gist_id = engine.consolidate_episode(ep_id)
+        gist = store.get_gist(gist_id)
+        # Without synthesize, should fall back to summarize
+        assert "[vlm]" not in gist.text
+        assert "white cabinets" in gist.text
+        assert "chair" in gist.text
+
 
 class FakeEntityExtractor:
     """Summarizer that also implements extract_entities."""

@@ -224,6 +224,14 @@ class SpatioTemporalMemory:
         self._ensure_flushed()
         return self._tools.entity_query(**kwargs)
 
+    def locate(self, concept: str, **kwargs: Any) -> str:
+        self._ensure_flushed()
+        return self._tools.locate(concept=concept, **kwargs)
+
+    def recall(self, query: str, **kwargs: Any) -> str:
+        self._ensure_flushed()
+        return self._tools.recall(query=query, **kwargs)
+
     # ── Consolidation ─────────────────────────────────────────────
 
     def consolidate_time_window(self) -> List[str]:
@@ -252,7 +260,7 @@ class SpatioTemporalMemory:
     def dispatch_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Dispatch a tool call by name.  Auto-flushes before executing.
 
-        :param tool_name: One of the seven tool names.
+        :param tool_name: One of the nine tool names.
         :param arguments: Tool arguments dict.
         :returns: Formatted result string.
         :rtype: str

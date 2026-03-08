@@ -182,6 +182,23 @@ class MemoryStore:
         for row in entity_rows:
             self._spatial.insert(row["id"], np.array([row["x"], row["y"], row["z"]]))
 
+    @staticmethod
+    def _spatial_filter_sql(
+        center: np.ndarray,
+        radius: float,
+        x_col: str = "x",
+        y_col: str = "y",
+        z_col: str = "z",
+    ) -> Tuple[str, List[float]]:
+        """Return a SQL WHERE clause fragment and params for a distance filter."""
+        x, y, z = _to_xyz(center)
+        clause = (
+            f"(({x_col} - ?) * ({x_col} - ?) + ({y_col} - ?) * ({y_col} - ?) "
+            f"+ ({z_col} - ?) * ({z_col} - ?)) <= ?"
+        )
+        params = [x, x, y, y, z, z, radius ** 2]
+        return clause, params
+
     def _next_hnsw_id(self) -> int:
         self._hnsw_counter += 1
         return self._hnsw_counter
@@ -230,7 +247,7 @@ class MemoryStore:
                 has_emb = 1 if obs.embedding is not None else 0
 
                 self._db.execute(
-                    """INSERT OR REPLACE INTO observations
+                    """INSERT INTO observations
                        (id, text, x, y, z, timestamp, layer_name, source_type,
                         confidence, episode_id, metadata, tier, has_embedding)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -501,11 +518,12 @@ class MemoryStore:
                             return entity
 
         # Fallback: exact name match within spatial radius
-        x, y, z = _to_xyz(coordinates)
+        clause, dist_params = self._spatial_filter_sql(
+            coordinates, self.config.entity_spatial_radius,
+        )
         rows = self._db.execute(
-            """SELECT * FROM entities WHERE name = ?
-               AND ((x - ?) * (x - ?) + (y - ?) * (y - ?) + (z - ?) * (z - ?)) <= ?""",
-            (name, x, x, y, y, z, z, self.config.entity_spatial_radius ** 2),
+            "SELECT * FROM entities WHERE name = ? AND " + clause,
+            [name] + dist_params,
         ).fetchall()
         if rows:
             return self._row_to_entity(rows[0])
@@ -529,9 +547,9 @@ class MemoryStore:
             query += " AND entity_type = ?"
             params.append(entity_type)
         if near_coordinates is not None and spatial_radius is not None:
-            x, y, z = _to_xyz(near_coordinates)
-            query += " AND ((x - ?) * (x - ?) + (y - ?) * (y - ?) + (z - ?) * (z - ?)) <= ?"
-            params.extend([x, x, y, y, z, z, spatial_radius ** 2])
+            clause, dist_params = self._spatial_filter_sql(near_coordinates, spatial_radius)
+            query += " AND " + clause
+            params.extend(dist_params)
         if last_seen_after is not None:
             query += " AND last_seen >= ?"
             params.append(last_seen_after)
@@ -748,9 +766,17 @@ class MemoryStore:
         ).fetchall()
         type_map = {r["str_id"]: r["node_type"] for r in type_rows}
 
-        obs_ids = [cid for cid in candidate_ids if type_map.get(cid) == "observation"]
-        gist_ids = [cid for cid in candidate_ids if type_map.get(cid) == "gist"]
-        entity_ids = [cid for cid in candidate_ids if type_map.get(cid) == "entity"]
+        obs_ids: List[str] = []
+        gist_ids: List[str] = []
+        entity_ids: List[str] = []
+        for cid in candidate_ids:
+            node_type = type_map.get(cid)
+            if node_type == "observation":
+                obs_ids.append(cid)
+            elif node_type == "gist":
+                gist_ids.append(cid)
+            elif node_type == "entity":
+                entity_ids.append(cid)
 
         results: List[Union[ObservationNode, GistNode, EntityNode]] = []
 
@@ -770,9 +796,9 @@ class MemoryStore:
                 obs_sql += " AND episode_id = ?"
                 obs_params.append(episode_id)
             if spatial_center is not None and spatial_radius is not None:
-                x, y, z = _to_xyz(spatial_center)
-                obs_sql += " AND ((x - ?) * (x - ?) + (y - ?) * (y - ?) + (z - ?) * (z - ?)) <= ?"
-                obs_params.extend([x, x, y, y, z, z, spatial_radius ** 2])
+                clause, dist_params = self._spatial_filter_sql(spatial_center, spatial_radius)
+                obs_sql += " AND " + clause
+                obs_params.extend(dist_params)
 
             obs_sql += " AND tier != 'archived'"
 
@@ -796,9 +822,11 @@ class MemoryStore:
                 gist_sql += " AND episode_id = ?"
                 gist_params.append(episode_id)
             if spatial_center is not None and spatial_radius is not None:
-                x, y, z = _to_xyz(spatial_center)
-                gist_sql += " AND ((cx - ?) * (cx - ?) + (cy - ?) * (cy - ?) + (cz - ?) * (cz - ?)) <= ?"
-                gist_params.extend([x, x, y, y, z, z, spatial_radius ** 2])
+                clause, dist_params = self._spatial_filter_sql(
+                    spatial_center, spatial_radius, x_col="cx", y_col="cy", z_col="cz",
+                )
+                gist_sql += " AND " + clause
+                gist_params.extend(dist_params)
 
             rows = self._db.execute(gist_sql, gist_params).fetchall()
             results.extend(self._row_to_gist(r) for r in rows)
@@ -816,9 +844,9 @@ class MemoryStore:
                 ent_sql += " AND last_seen >= ? AND last_seen <= ?"
                 ent_params.extend(time_range)
             if spatial_center is not None and spatial_radius is not None:
-                x, y, z = _to_xyz(spatial_center)
-                ent_sql += " AND ((x - ?) * (x - ?) + (y - ?) * (y - ?) + (z - ?) * (z - ?)) <= ?"
-                ent_params.extend([x, x, y, y, z, z, spatial_radius ** 2])
+                clause, dist_params = self._spatial_filter_sql(spatial_center, spatial_radius)
+                ent_sql += " AND " + clause
+                ent_params.extend(dist_params)
 
             rows = self._db.execute(ent_sql, ent_params).fetchall()
             results.extend(self._row_to_entity(r) for r in rows)
@@ -930,9 +958,9 @@ class MemoryStore:
             query += " AND layer_name = ?"
             params.append(layer)
         if spatial_center is not None and spatial_radius is not None:
-            x, y, z = _to_xyz(spatial_center)
-            query += " AND ((x - ?) * (x - ?) + (y - ?) * (y - ?) + (z - ?) * (z - ?)) <= ?"
-            params.extend([x, x, y, y, z, z, spatial_radius ** 2])
+            clause, dist_params = self._spatial_filter_sql(spatial_center, spatial_radius)
+            query += " AND " + clause
+            params.extend(dist_params)
 
         order_dir = "DESC" if order == "newest" else "ASC"
         query += " ORDER BY timestamp %s LIMIT ?" % order_dir
@@ -999,12 +1027,12 @@ class MemoryStore:
         :returns: Matching gists.
         :rtype: List[GistNode]
         """
-        x, y, z = _to_xyz(center)
+        clause, dist_params = self._spatial_filter_sql(
+            center, radius, x_col="cx", y_col="cy", z_col="cz",
+        )
         rows = self._db.execute(
-            """SELECT * FROM gists
-               WHERE ((cx-?)*(cx-?) + (cy-?)*(cy-?) + (cz-?)*(cz-?)) <= ?
-               LIMIT ?""",
-            (x, x, y, y, z, z, radius ** 2, n_results),
+            "SELECT * FROM gists WHERE " + clause + " LIMIT ?",
+            dist_params + [n_results],
         ).fetchall()
         return [self._row_to_gist(r) for r in rows]
 

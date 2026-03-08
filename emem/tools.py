@@ -64,6 +64,26 @@ def _format_observations(observations: list, include_coords: bool = True) -> str
     return "\n".join(lines)
 
 
+def _format_observations_by_layer(observations: list, include_coords: bool = True) -> str:
+    """Format observations grouped by layer_name."""
+    if not observations:
+        return "No observations found."
+    by_layer: Dict[str, list] = {}
+    for obs in observations:
+        by_layer.setdefault(obs.layer_name, []).append(obs)
+    lines = []
+    for layer_name in sorted(by_layer.keys()):
+        lines.append(f"  [{layer_name}]")
+        for obs in by_layer[layer_name]:
+            parts = []
+            if include_coords:
+                c = obs.coordinates
+                parts.append(f"({c[0]:.1f},{c[1]:.1f})")
+            parts.append(obs.text)
+            lines.append(f"    - {' '.join(parts)}")
+    return "\n".join(lines)
+
+
 def _format_results(results: list, include_coords: bool = True) -> str:
     if not results:
         return "No results found."
@@ -74,7 +94,7 @@ def _format_results(results: list, include_coords: bool = True) -> str:
 
 
 class MemoryTools:
-    """LLM tool interface providing seven memory query tools.
+    """LLM tool interface providing nine memory query tools.
 
     Each tool method returns a formatted string for token-efficient LLM
     consumption.
@@ -83,7 +103,7 @@ class MemoryTools:
     _TOOL_NAMES = frozenset({
         "semantic_search", "spatial_query", "temporal_query",
         "episode_summary", "get_current_context", "search_gists",
-        "entity_query",
+        "entity_query", "locate", "recall",
     })
 
     def __init__(
@@ -239,7 +259,7 @@ class MemoryTools:
             )
             if nearby:
                 parts.append(f"Nearby ({radius}m):")
-                parts.append(_format_observations(nearby, include_coords=False))
+                parts.append(_format_observations_by_layer(nearby, include_coords=False))
 
             area_gists = self.store.search_gists_by_area(center=pos, radius=radius)
             if area_gists:
@@ -328,6 +348,106 @@ class MemoryTools:
         for i, entity in enumerate(results, 1):
             lines.append(f"{i}. {_format_memory_result(entity)}")
         return "\n".join(lines)
+
+    # ── Tool 8: Locate ────────────────────────────────────────────
+
+    def _locate_coords(
+        self,
+        concept: str,
+        n_results: int = 10,
+        layer: Optional[str] = None,
+        time_after: Optional[str] = None,
+        time_before: Optional[str] = None,
+    ) -> Optional[Tuple[np.ndarray, float, int]]:
+        """Returns (centroid, radius, count) or None."""
+        results = self.store.semantic_search(
+            query=concept,
+            n_results=n_results,
+            layer=layer,
+            time_range=self._time_range(time_after, time_before),
+        )
+        if not results:
+            return None
+        coords = []
+        for item in results:
+            if hasattr(item, "coordinates"):
+                coords.append(item.coordinates)
+            elif hasattr(item, "center_position"):
+                coords.append(item.center_position)
+        if not coords:
+            return None
+        coords_arr = np.array(coords)
+        centroid = coords_arr.mean(axis=0)
+        distances = np.linalg.norm(coords_arr - centroid, axis=1)
+        radius = float(distances.max()) if len(distances) > 1 else 1.0
+        return centroid, radius, len(coords)
+
+    def locate(
+        self,
+        concept: str,
+        n_results: int = 10,
+        layer: Optional[str] = None,
+        time_after: Optional[str] = None,
+        time_before: Optional[str] = None,
+    ) -> str:
+        result = self._locate_coords(
+            concept, n_results, layer, time_after, time_before,
+        )
+        if result is None:
+            return "Could not locate: no matching memories found."
+        centroid, radius, count = result
+        return (
+            f"Location: ({centroid[0]:.1f}, {centroid[1]:.1f}, {centroid[2]:.1f})\n"
+            f"Radius: {radius:.1f}m\n"
+            f"Based on: {count} matching memories"
+        )
+
+    # ── Tool 9: Recall ─────────────────────────────────────────────
+
+    def recall(
+        self,
+        query: str,
+        n_results: int = 10,
+        radius_multiplier: float = 1.5,
+    ) -> str:
+        location = self._locate_coords(query, n_results=n_results)
+        if location is None:
+            return f"No memories found for: {query}"
+        centroid, radius, match_count = location
+        search_radius = max(radius * radius_multiplier, 2.0)
+
+        observations = self.store.spatial_query(
+            center=centroid, radius=search_radius, n_results=n_results * 3,
+        )
+        gists = self.store.search_gists_by_area(
+            center=centroid, radius=search_radius,
+        )
+        entities = self.store.query_entities(
+            near_coordinates=centroid, spatial_radius=search_radius,
+            n_results=n_results,
+        )
+
+        parts = [
+            f"About '{query}' — location ({centroid[0]:.1f}, {centroid[1]:.1f}), "
+            f"radius {search_radius:.1f}m:"
+        ]
+        if observations:
+            parts.append("Observations:")
+            parts.append(_format_observations_by_layer(observations))
+        if gists:
+            parts.append("Summaries:")
+            for g in gists:
+                parts.append(
+                    f"  [{g.layer_name or 'cross-layer'}] {g.text}"
+                )
+        if entities:
+            parts.append("Entities:")
+            for ent in entities:
+                parts.append(
+                    f"  [{ent.entity_type or 'object'}] {ent.name} "
+                    f"(seen {ent.observation_count}x)"
+                )
+        return "\n".join(parts)
 
     def get_tool_definitions(self) -> List[Dict[str, Any]]:
         """Return tool definitions suitable for LLM function calling.
@@ -444,12 +564,40 @@ class MemoryTools:
                     },
                 },
             },
+            {
+                "name": "locate",
+                "description": "Find the spatial location of a concept (e.g. 'kitchen', 'charging station'). Returns centroid coordinates and spread radius.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "concept": {"type": "string", "description": "What to locate"},
+                        "n_results": {"type": "integer", "default": 10},
+                        "layer": {"type": "string", "description": "Filter by layer name"},
+                        "time_after": {"type": "string"},
+                        "time_before": {"type": "string"},
+                    },
+                    "required": ["concept"],
+                },
+            },
+            {
+                "name": "recall",
+                "description": "Recall everything known about a concept. Locates it spatially, then gathers cross-layer observations, gists, and entities from that area.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "What to recall (e.g. 'kitchen', 'the red chair')"},
+                        "n_results": {"type": "integer", "default": 10},
+                        "radius_multiplier": {"type": "number", "default": 1.5, "description": "Multiplier for search radius around located area"},
+                    },
+                    "required": ["query"],
+                },
+            },
         ]
 
     def dispatch_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Dispatch a tool call by name.
 
-        :param tool_name: One of the seven tool names.
+        :param tool_name: One of the nine tool names.
         :param arguments: Tool arguments dict.
         :returns: Formatted result string.
         :rtype: str

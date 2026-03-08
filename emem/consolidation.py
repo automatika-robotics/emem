@@ -25,6 +25,19 @@ class ConcatenationSummarizer:
     def summarize(self, texts: List[str]) -> str:
         return " | ".join(texts)
 
+    def synthesize(self, layer_texts: Dict[str, List[str]]) -> str:
+        """Synthesize texts grouped by layer into a structured summary."""
+        parts = []
+        for layer_name in sorted(layer_texts.keys()):
+            parts.append(f"[{layer_name}] {' | '.join(layer_texts[layer_name])}")
+        return " || ".join(parts)
+
+
+def _common_layer(observations: List[ObservationNode], default: Optional[str] = None) -> Optional[str]:
+    """Return the layer name if all observations share one, else *default*."""
+    layers = set(obs.layer_name for obs in observations)
+    return next(iter(layers)) if len(layers) == 1 else default
+
 
 class ConsolidationEngine:
     """Handles memory consolidation: gist generation, tier promotion, and
@@ -125,8 +138,19 @@ class ConsolidationEngine:
         observations: List[ObservationNode],
         episode_id: Optional[str] = None,
     ) -> GistNode:
-        texts = [obs.text for obs in observations if obs.text]
-        gist_text = self._summarizer.summarize(texts) if texts else ""
+        # Determine layer — use common layer if all same, else None
+        layer_name = _common_layer(observations)
+        is_multi_layer = layer_name is None and len(observations) > 0
+
+        if is_multi_layer and hasattr(self._summarizer, "synthesize"):
+            layer_texts: Dict[str, List[str]] = {}
+            for obs in observations:
+                if obs.text:
+                    layer_texts.setdefault(obs.layer_name, []).append(obs.text)
+            gist_text = self._summarizer.synthesize(layer_texts) if layer_texts else ""
+        else:
+            texts = [obs.text for obs in observations if obs.text]
+            gist_text = self._summarizer.summarize(texts) if texts else ""
 
         coords = np.array([obs.coordinates for obs in observations])
         center = coords.mean(axis=0)
@@ -134,10 +158,6 @@ class ConsolidationEngine:
         radius = float(distances.max()) if len(distances) > 0 else 0.0
 
         timestamps = [obs.timestamp for obs in observations]
-
-        # Determine layer — use common layer if all same, else None
-        layers = set(obs.layer_name for obs in observations)
-        layer_name = layers.pop() if len(layers) == 1 else None
 
         return GistNode(
             text=gist_text,
@@ -187,8 +207,7 @@ class ConsolidationEngine:
                 self.store.update_entity(existing)
                 entity_ids.append(existing.id)
             else:
-                layers = set(obs.layer_name for obs in observations)
-                layer_name = layers.pop() if len(layers) == 1 else "default"
+                layer_name = _common_layer(observations, default="default")
                 entity = EntityNode(
                     name=name,
                     coordinates=centroid,
