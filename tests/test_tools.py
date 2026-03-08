@@ -223,12 +223,12 @@ class TestDispatch:
 class TestToolDefinitions:
     def test_returns_nine_tools(self, tools):
         defs = tools.get_tool_definitions()
-        assert len(defs) == 9
+        assert len(defs) == 10
         names = {d["name"] for d in defs}
         assert names == {
             "semantic_search", "spatial_query", "temporal_query",
             "episode_summary", "get_current_context", "search_gists",
-            "entity_query", "locate", "recall",
+            "entity_query", "locate", "recall", "body_status",
         }
 
 

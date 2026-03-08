@@ -126,7 +126,7 @@ class TestToolDispatch:
 
     def test_tool_definitions(self, mem):
         defs = mem.get_tool_definitions()
-        assert len(defs) == 9
+        assert len(defs) == 10
 
 
 class TestContextManager:
