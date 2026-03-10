@@ -96,17 +96,11 @@ def strip_think_tags(text: str) -> str:
 def encode_image_b64(image: np.ndarray) -> str:
     """Encode an RGB numpy array as a base64 PNG string.
 
-    Falls back to PPM format if PIL is not available.
-
     :param image: ``(H, W, 3)`` uint8 numpy array.
     :returns: Base64-encoded image string.
     """
-    try:
-        from PIL import Image
-        buf = io.BytesIO()
-        Image.fromarray(image).save(buf, format="PNG")
-        return base64.b64encode(buf.getvalue()).decode()
-    except ImportError:
-        h, w = image.shape[:2]
-        header = f"P6\n{w} {h}\n255\n".encode()
-        return base64.b64encode(header + image.tobytes()).decode()
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.fromarray(image).save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
