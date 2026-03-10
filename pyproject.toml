@@ -30,3 +30,9 @@ include = ["emem*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "ollama: requires running Ollama server",
+    "gemini: requires GEMINI_API_KEY env var",
+    "minigrid: requires minigrid installed",
+    "slow: tests taking >30s",
+]

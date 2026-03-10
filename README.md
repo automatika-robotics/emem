@@ -18,7 +18,8 @@
   <a href="#quick-start">Quick Start</a> &middot;
   <a href="#architecture">Architecture</a> &middot;
   <a href="#llm-tool-interface">LLM Tools</a> &middot;
-  <a href="#api-reference">API</a>
+  <a href="#api-reference">API</a> &middot;
+  <a href="#testing-harness">Harness</a>
 </p>
 
 ---
@@ -349,6 +350,98 @@ See the [`examples/`](examples/) directory:
 
 - **[`basic_memory.py`](examples/basic_memory.py)** -- Standalone usage: adding observations, episode lifecycle, all query tools
 - **[`memory_agent.py`](examples/memory_agent.py)** -- Simulated LLM agent using memory tools in a ReAct-style loop
+
+## Testing Harness
+
+The `harness/` directory contains a standalone test client that simulates what EMOS will do: an agent navigates a MiniGrid environment, a VLM describes each frame, synthetic body state is generated, and everything flows into eMEM for storage and querying. A ReAct agent then answers questions against the populated memory.
+
+### Setup
+
+```bash
+# Install harness dependencies (not part of emem itself)
+pip install minigrid gymnasium
+
+# Pull Ollama models
+ollama pull nomic-embed-text-v2-moe:latest
+ollama pull qwen3.5:4b
+```
+
+### Running
+
+```bash
+# Quick smoke test (20 steps, VLM every 10)
+python -m harness.run --steps 20 --vlm-every 10
+
+# Full run (100 steps, VLM every 5)
+python -m harness.run --steps 100 --vlm-every 5
+
+# Keep the memory DB for later inspection
+python -m harness.run --steps 50 --db-path my_test.db
+
+# JSON output
+python -m harness.run --steps 50 --json
+
+# Verbose logging (debug level)
+python -m harness.run --steps 20 -v
+```
+
+The harness logs progress to stderr as it runs: each VLM inference, episode boundaries, and each evaluation query with its result.
+
+### What it does
+
+Each run:
+
+1. **Ingestion** -- navigates MiniGrid with random actions, periodically sends rendered frames to a VLM (`qwen3.5:4b`) with two prompts (scene description + place type), and feeds results into eMEM as separate observation layers. Synthetic body state (battery, CPU temp, joint health) is generated every step.
+
+2. **Evaluation** -- a ReAct agent answers 8 benchmark queries ("What places have I visited?", "What's my battery level?", "Where is the door?", etc.) and the harness measures tool selection accuracy, answer relevance, and latency.
+
+### Using from Python
+
+```python
+from emem import SpatioTemporalMemory
+from harness.providers import OllamaEmbeddingProvider, OllamaLLMClient, OllamaVLM
+from harness.environments import MiniGridAdapter, SyntheticInteroception
+from harness.agent import ReactAgent
+
+embedder = OllamaEmbeddingProvider()
+llm = OllamaLLMClient()
+vlm = OllamaVLM()
+env = MiniGridAdapter()
+intero = SyntheticInteroception()
+
+with SpatioTemporalMemory(
+    db_path="my_test.db", embedding_provider=embedder, llm_client=llm,
+) as mem:
+    mem.start_episode("exploration")
+    frame, pos = env.reset()
+
+    for step in range(50):
+        frame, pos, reward, done, info = env.step(2)  # forward
+
+        if step % 5 == 0:
+            desc = vlm.describe(frame, "Describe what you see in 1-2 sentences.")
+            mem.add(desc, x=float(pos[0]), y=float(pos[1]), layer_name="description")
+
+        for layer, text in intero.step().items():
+            mem.add_body_state(text, layer_name=layer)
+
+        if done:
+            mem.end_episode()
+            mem.start_episode("exploration")
+            frame, pos = env.reset()
+
+    mem.end_episode()
+
+    # Query directly
+    print(mem.semantic_search("door"))
+    print(mem.body_status())
+
+    # Or through the ReAct agent
+    agent = ReactAgent(mem)
+    print(agent.run("What places have I visited?").answer)
+
+env.close()
+```
 
 ## Development
 

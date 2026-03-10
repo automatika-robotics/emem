@@ -1,0 +1,2 @@
+minigrid>=2.3
+gymnasium>=0.29
