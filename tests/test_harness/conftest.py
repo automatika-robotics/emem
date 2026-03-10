@@ -9,6 +9,7 @@ def pytest_collection_modifyitems(config, items):
     ollama_available = None
     minigrid_available = None
     gemini_available = None
+    ai2thor_available = None
 
     for item in items:
         if "ollama" in item.keywords:
@@ -31,6 +32,13 @@ def pytest_collection_modifyitems(config, items):
             if not gemini_available:
                 item.add_marker(
                     pytest.mark.skip(reason="GEMINI_API_KEY not set")
+                )
+        if "ai2thor" in item.keywords:
+            if ai2thor_available is None:
+                ai2thor_available = _check_ai2thor()
+            if not ai2thor_available:
+                item.add_marker(
+                    pytest.mark.skip(reason="ai2thor not installed")
                 )
 
 
@@ -55,3 +63,12 @@ def _check_minigrid() -> bool:
 
 def _check_gemini() -> bool:
     return bool(os.environ.get("GEMINI_API_KEY"))
+
+
+def _check_ai2thor() -> bool:
+    try:
+        import ai2thor  # noqa: F401
+
+        return True
+    except ImportError:
+        return False

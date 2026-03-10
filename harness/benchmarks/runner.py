@@ -27,7 +27,7 @@ class HarnessReport:
 class HarnessRunner:
     """Ties together environment, VLM, memory, and agent for benchmarking.
 
-    :param env_name: MiniGrid environment name.
+    :param env_name: MiniGrid environment name or AI2-THOR scene (e.g. ``"FloorPlan1"``).
     :param vlm_model: Model name for VLM inference.
     :param llm_model: Model name for LLM (consolidation + agent).
     :param embed_model: Model name for embeddings.
@@ -53,6 +53,8 @@ class HarnessRunner:
         vlm_every_n: int = 5,
         queries: list[BenchmarkQuery] | None = None,
         db_path: str | None = None,
+        headless: bool = False,
+        resolution: int = 300,
     ):
         self._env_name = env_name
         self._vlm_model = vlm_model
@@ -65,6 +67,8 @@ class HarnessRunner:
         self._vlm_every_n = vlm_every_n
         self._queries = queries or STANDARD_QUERIES
         self._db_path = db_path
+        self._headless = headless
+        self._resolution = resolution
 
     def run(self) -> HarnessReport:
         """Execute the full harness: ingestion then evaluation.
@@ -74,14 +78,13 @@ class HarnessRunner:
         from emem import SpatioTemporalMemory
 
         from harness.environments.interoception import SyntheticInteroception
-        from harness.environments.minigrid_adapter import MiniGridAdapter
 
         log.info("Initializing %s providers...", self._provider)
         embedder, llm, vlm, agent_kwargs = self._make_providers()
         log.info("Providers ready (embed_dim=%d)", embedder.dim)
 
         log.info("Creating environment: %s", self._env_name)
-        env = MiniGridAdapter(self._env_name)
+        env = self._make_env()
         intero = SyntheticInteroception()
 
         db_path = self._db_path or tempfile.mktemp(suffix=".db")
@@ -113,13 +116,21 @@ class HarnessRunner:
                 log.info("[step %d/%d] VLM at pos=(%d, %d)...", step, self._n_steps, pos[0], pos[1])
 
                 t0 = time.monotonic()
-                description = vlm.describe(frame, "Describe what you see in this scene in 1-2 sentences.")
+                description = vlm.describe(
+                    frame,
+                    "Describe what you see in this scene in 1-2 sentences.",
+                    max_tokens=150,
+                )
                 dt = time.monotonic() - t0
                 vlm_latencies.append(dt)
                 log.info("  description (%.1fs): %s", dt, description[:80])
 
                 t0 = time.monotonic()
-                place = vlm.describe(frame, "What type of place or room is this? Answer in one word.")
+                place = vlm.describe(
+                    frame,
+                    "What type of place or room is this? Answer in one word only.",
+                    max_tokens=20,
+                )
                 dt = time.monotonic() - t0
                 vlm_latencies.append(dt)
                 log.info("  place (%.1fs): %s", dt, place[:80])
@@ -177,6 +188,22 @@ class HarnessRunner:
             n_observations=n_obs, n_body_states=n_body,
             ingestion_time_s=ingestion_time, query_results=metrics.per_query,
         )
+
+    def _make_env(self) -> Any:
+        """Create the environment adapter based on env_name."""
+        if self._env_name.startswith("FloorPlan"):
+            from harness.environments.ai2thor_adapter import AI2ThorAdapter
+
+            return AI2ThorAdapter(
+                scene=self._env_name,
+                headless=self._headless,
+                width=self._resolution,
+                height=self._resolution,
+            )
+
+        from harness.environments.minigrid_adapter import MiniGridAdapter
+
+        return MiniGridAdapter(self._env_name)
 
     def _make_providers(self) -> tuple:
         """Create ``(embedder, llm, vlm, agent_kwargs)``."""

@@ -1,3 +1,4 @@
 minigrid>=2.3
 gymnasium>=0.29
 Pillow>=9.0
+# ai2thor  # optional — only needed for AI2-THOR scenes (FloorPlan*)

@@ -22,7 +22,12 @@ def main():
     )
     parser.add_argument("--steps", type=int, default=100, help="Number of environment steps")
     parser.add_argument("--vlm-every", type=int, default=5, help="Run VLM every N steps")
-    parser.add_argument("--env", type=str, default="MiniGrid-MultiRoom-N6-v0", help="MiniGrid env name")
+    parser.add_argument(
+        "--env", type=str, default="MiniGrid-MultiRoom-N6-v0",
+        help="Environment name: MiniGrid env (e.g. MiniGrid-MultiRoom-N6-v0) or AI2-THOR scene (e.g. FloorPlan1)",
+    )
+    parser.add_argument("--headless", action="store_true", help="Use CloudRendering for AI2-THOR (no display)")
+    parser.add_argument("--resolution", type=int, default=300, help="Frame resolution for AI2-THOR (default: 300)")
     parser.add_argument(
         "--provider", type=str, default="ollama", choices=["ollama", "gemini"],
         help="LLM/VLM/embedding provider backend",
@@ -61,6 +66,8 @@ def main():
         n_steps=args.steps,
         vlm_every_n=args.vlm_every,
         db_path=args.db_path,
+        headless=args.headless,
+        resolution=args.resolution,
     )
 
     report = runner.run()

@@ -34,5 +34,6 @@ markers = [
     "ollama: requires running Ollama server",
     "gemini: requires GEMINI_API_KEY env var",
     "minigrid: requires minigrid installed",
+    "ai2thor: requires ai2thor installed",
     "slow: tests taking >30s",
 ]
