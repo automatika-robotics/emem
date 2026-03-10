@@ -291,7 +291,7 @@ class MemoryTools:
         )
         if recent:
             parts.append(f"Recent ({include_recent_minutes}min):")
-            parts.append(_format_observations(recent))
+            parts.append(_format_observations_by_layer(recent, include_coords=True))
 
         body = self.body_status()
         if body and "No body state" not in body:
@@ -370,8 +370,8 @@ class MemoryTools:
         layer: Optional[str] = None,
         time_after: Optional[str] = None,
         time_before: Optional[str] = None,
-    ) -> Optional[Tuple[np.ndarray, float, int]]:
-        """Returns (centroid, radius, count) or None."""
+    ) -> Optional[Tuple[np.ndarray, float, int, list]]:
+        """Returns (centroid, radius, count, results) or None."""
         results = self.store.semantic_search(
             query=concept,
             n_results=n_results,
@@ -392,7 +392,7 @@ class MemoryTools:
         centroid = coords_arr.mean(axis=0)
         distances = np.linalg.norm(coords_arr - centroid, axis=1)
         radius = float(distances.max()) if len(distances) > 1 else 1.0
-        return centroid, radius, len(coords)
+        return centroid, radius, len(coords), results
 
     def locate(
         self,
@@ -407,12 +407,28 @@ class MemoryTools:
         )
         if result is None:
             return "Could not locate: no matching memories found."
-        centroid, radius, count = result
-        return (
-            f"Location: ({centroid[0]:.1f}, {centroid[1]:.1f}, {centroid[2]:.1f})\n"
-            f"Radius: {radius:.1f}m\n"
-            f"Based on: {count} matching memories"
+        centroid, radius, count, results = result
+
+        layers_seen: Dict[str, int] = {}
+        for item in results:
+            ln = getattr(item, "layer_name", None) or "unknown"
+            layers_seen[ln] = layers_seen.get(ln, 0) + 1
+        layer_summary = ", ".join(
+            f"{v}x {k}" for k, v in sorted(layers_seen.items())
         )
+
+        parts = [
+            f"Location: ({centroid[0]:.1f}, {centroid[1]:.1f}, {centroid[2]:.1f})",
+            f"Radius: {radius:.1f}m",
+            f"Based on: {count} memories ({layer_summary})",
+        ]
+        for item in results[:3]:
+            text = getattr(item, "text", None) or getattr(item, "name", "")
+            if text:
+                ln = getattr(item, "layer_name", "") or ""
+                parts.append(f"  [{ln}] {text[:80]}")
+
+        return "\n".join(parts)
 
     # ── Tool 9: Recall ─────────────────────────────────────────────
 
@@ -425,7 +441,7 @@ class MemoryTools:
         location = self._locate_coords(query, n_results=n_results)
         if location is None:
             return f"No memories found for: {query}"
-        centroid, radius, match_count = location
+        centroid, radius, match_count, _results = location
         search_radius = max(radius * radius_multiplier, 2.0)
 
         observations = self.store.spatial_query(

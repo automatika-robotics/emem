@@ -56,15 +56,22 @@ class GeminiLLMClient:
         )
         return _parse_entities(raw)
 
-    def describe(self, image_b64: str, prompt: str, mime_type: str = "image/png") -> str:
+    def describe(
+        self,
+        image_b64: str,
+        prompt: str,
+        mime_type: str = "image/png",
+        max_tokens: int | None = None,
+    ) -> str:
         """Send a base64-encoded image with a text prompt.
 
         :param image_b64: Base64-encoded image data.
         :param prompt: Text prompt.
         :param mime_type: Image MIME type.
+        :param max_tokens: Maximum tokens to generate.
         :returns: Model's text response.
         """
-        payload = {
+        payload: dict[str, Any] = {
             "contents": [{
                 "parts": [
                     {"inline_data": {"mime_type": mime_type, "data": image_b64}},
@@ -72,6 +79,8 @@ class GeminiLLMClient:
                 ],
             }],
         }
+        if max_tokens is not None:
+            payload["generationConfig"] = {"maxOutputTokens": max_tokens}
         data = post_json_with_retry(self._url, payload)
         return _extract_text(data)
 

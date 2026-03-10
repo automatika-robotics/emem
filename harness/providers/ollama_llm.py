@@ -48,12 +48,15 @@ class OllamaLLMClient:
         )
         return _parse_entities(raw)
 
-    def _chat(self, prompt: str) -> str:
-        data = post_json(self._url, {
+    def _chat(self, prompt: str, max_tokens: int | None = None) -> str:
+        body: dict = {
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
-        }, timeout=300)
+        }
+        if max_tokens is not None:
+            body["options"] = {"num_predict": max_tokens}
+        data = post_json(self._url, body, timeout=300)
         return strip_think_tags(data["message"]["content"])
 
 

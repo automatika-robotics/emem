@@ -20,11 +20,23 @@ When you have enough information to answer the user's question, respond with:
 Thought: I now have enough information to answer.
 Final Answer: <your answer>
 
+Tool selection guide — pick ONE tool that best matches the query:
+- "What did I see recently?" / "What happened in the last N minutes?" → temporal_query
+- "What is near (x, y)?" / "What's around position ...?" → spatial_query
+- "Where is X?" / "Find the location of X" → locate
+- "Tell me everything about X" / "What do I know about X?" → recall
+- "What's my battery/temperature/joint status?" → body_status
+- "Summarize my exploration" / "What episodes have there been?" → episode_summary
+- "What's the current situation?" / "What's around me right now?" → get_current_context
+- "Search for X" / "What places have I visited?" / general search → semantic_search
+- "What summaries exist about X?" → search_gists
+- "Find entities named X" / "What objects have I seen?" → entity_query
+
 Rules:
 - Always start with a Thought before taking an Action.
 - Action Input must be valid JSON.
-- Use the most specific tool for the query.
-- You may chain multiple tool calls if needed.
+- Prefer answering with a SINGLE tool call. Only chain tools if the first result is genuinely insufficient.
+- After receiving an Observation, give a Final Answer unless the result was empty or wrong.
 - Be concise in your Final Answer.
 """
 
