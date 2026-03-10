@@ -179,7 +179,7 @@ class ReactAgent(_BaseReactAgent):
 
         data = post_json(self._url, {
             "model": self._model, "messages": messages, "stream": False,
-        })
+        }, timeout=300)
         return strip_think_tags(data["message"]["content"])
 
 

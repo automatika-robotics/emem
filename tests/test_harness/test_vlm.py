@@ -1,9 +1,7 @@
-"""Tests for OllamaVLM — requires running Ollama server."""
-
 import numpy as np
 import pytest
 
-pytestmark = pytest.mark.ollama
+pytestmark = [pytest.mark.ollama, pytest.mark.slow]
 
 
 class TestOllamaVLM:
@@ -11,7 +9,6 @@ class TestOllamaVLM:
         from harness.providers.ollama_vlm import OllamaVLM
 
         vlm = OllamaVLM()
-        # Create a simple synthetic image (colored rectangle)
         image = np.zeros((64, 64, 3), dtype=np.uint8)
         image[:32, :, 0] = 255  # red top half
         image[32:, :, 2] = 255  # blue bottom half

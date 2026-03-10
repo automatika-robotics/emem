@@ -26,5 +26,5 @@ class OllamaVLM:
             "model": self._model,
             "messages": [{"role": "user", "content": prompt, "images": [b64]}],
             "stream": False,
-        })
+        }, timeout=300)
         return strip_think_tags(data["message"]["content"])

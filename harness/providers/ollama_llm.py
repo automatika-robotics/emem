@@ -53,7 +53,7 @@ class OllamaLLMClient:
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
-        })
+        }, timeout=300)
         return strip_think_tags(data["message"]["content"])
 
 
