@@ -124,27 +124,4 @@ class TestTeleportTour:
         assert actions == [0]
         adapter.close()
 
-    def test_farthest_point_sampling(self):
-        from harness.environments.ai2thor_adapter import _farthest_point_sample
-
-        positions = [
-            {"x": 0.0, "y": 0.0, "z": 0.0},
-            {"x": 10.0, "y": 0.0, "z": 0.0},
-            {"x": 5.0, "y": 0.0, "z": 5.0},
-            {"x": 5.0, "y": 0.0, "z": -5.0},
-        ]
-        order = _farthest_point_sample(positions, start_idx=0)
-        assert order[0] == 0
-        # Second point should be the farthest from (0,0) = (10,0)
-        assert order[1] == 1
-        assert len(order) == 4
-
-    def test_farthest_point_sampling_max_points(self):
-        from harness.environments.ai2thor_adapter import _farthest_point_sample
-
-        positions = [
-            {"x": float(i), "y": 0.0, "z": 0.0} for i in range(10)
-        ]
-        order = _farthest_point_sample(positions, start_idx=0, max_points=3)
-        assert len(order) == 3
-        assert order[0] == 0
+    # FPS algorithm tests live in test_runner.py (no ai2thor dependency needed)

@@ -208,16 +208,18 @@ class MemoryTools:
             spatial_center = np.array([near_x, near_y, 0.0])
 
         last_n_seconds = last_n_minutes * 60 if last_n_minutes else None
+        time_range = self._time_range(time_after, time_before)
+        ref_time = self._get_time()
 
         results = self.store.temporal_query(
-            time_range=self._time_range(time_after, time_before),
+            time_range=time_range,
             last_n_seconds=last_n_seconds,
             layer=layer,
             spatial_center=spatial_center,
             spatial_radius=spatial_radius,
             order=order,
             n_results=n_results,
-            reference_time=self._get_time(),
+            reference_time=ref_time,
             source_type=source_type,
             exclude_source_type=exclude_source_type,
         )
@@ -227,12 +229,13 @@ class MemoryTools:
 
         # Fallback: observations may have been consolidated (archived).
         # Search gists covering the same time window instead.
-        time_range = self._time_range(time_after, time_before)
+        # Resolve the effective time_after for gist overlap query.
+        effective_after = time_range[0] if time_range else None
+        if effective_after is None and last_n_seconds is not None:
+            effective_after = ref_time - last_n_seconds
         gists = self.store.get_recent_gists(
-            time_after=time_range[0] if time_range else None,
+            time_after=effective_after,
             time_before=time_range[1] if time_range else None,
-            last_n_seconds=last_n_seconds,
-            reference_time=self._get_time(),
             layer=layer,
             order=order,
             n_results=n_results,

@@ -1100,8 +1100,6 @@ class MemoryStore:
         self,
         time_after: Optional[float] = None,
         time_before: Optional[float] = None,
-        last_n_seconds: Optional[float] = None,
-        reference_time: Optional[float] = None,
         layer: Optional[str] = None,
         order: str = "newest",
         n_results: int = 10,
@@ -1113,8 +1111,6 @@ class MemoryStore:
 
         :param time_after: Start of time window.
         :param time_before: End of time window.
-        :param last_n_seconds: Alternative — seconds before *reference_time*.
-        :param reference_time: Reference for *last_n_seconds*.
         :param layer: Filter by layer name.
         :param order: ``"newest"`` or ``"oldest"``.
         :param n_results: Maximum results.
@@ -1124,8 +1120,6 @@ class MemoryStore:
         query = "SELECT * FROM gists WHERE 1=1"
         params: list = []
 
-        if last_n_seconds and reference_time:
-            time_after = reference_time - last_n_seconds
         if time_after is not None:
             query += " AND time_end >= ?"
             params.append(time_after)
