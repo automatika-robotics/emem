@@ -29,6 +29,10 @@ def main():
     parser.add_argument("--headless", action="store_true", help="Use CloudRendering for AI2-THOR (no display)")
     parser.add_argument("--resolution", type=int, default=300, help="Frame resolution for AI2-THOR (default: 300)")
     parser.add_argument(
+        "--explore", type=str, default="random", choices=["random", "teleport"],
+        help="Exploration mode for AI2-THOR: random actions or teleport tour (default: random)",
+    )
+    parser.add_argument(
         "--provider", type=str, default="ollama", choices=["ollama", "gemini"],
         help="LLM/VLM/embedding provider backend",
     )
@@ -68,6 +72,7 @@ def main():
         db_path=args.db_path,
         headless=args.headless,
         resolution=args.resolution,
+        exploration_mode=args.explore,
     )
 
     report = runner.run()

@@ -73,6 +73,43 @@ class TestMetrics:
         assert report.vlm_latency_avg == 2.0
 
 
+class TestFarthestPointSampling:
+    def test_basic_ordering(self):
+        from harness.environments.ai2thor_adapter import _farthest_point_sample
+
+        positions = [
+            {"x": 0.0, "y": 0.0, "z": 0.0},
+            {"x": 10.0, "y": 0.0, "z": 0.0},
+            {"x": 5.0, "y": 0.0, "z": 5.0},
+            {"x": 5.0, "y": 0.0, "z": -5.0},
+        ]
+        order = _farthest_point_sample(positions, start_idx=0)
+        assert order[0] == 0
+        assert order[1] == 1  # farthest from origin
+        assert len(order) == 4
+
+    def test_max_points(self):
+        from harness.environments.ai2thor_adapter import _farthest_point_sample
+
+        positions = [{"x": float(i), "y": 0.0, "z": 0.0} for i in range(10)]
+        order = _farthest_point_sample(positions, start_idx=0, max_points=3)
+        assert len(order) == 3
+        assert order[0] == 0
+        # Farthest from 0 is 9
+        assert order[1] == 9
+
+    def test_empty(self):
+        from harness.environments.ai2thor_adapter import _farthest_point_sample
+
+        assert _farthest_point_sample([]) == []
+
+    def test_single_point(self):
+        from harness.environments.ai2thor_adapter import _farthest_point_sample
+
+        order = _farthest_point_sample([{"x": 1.0, "y": 0.0, "z": 2.0}])
+        assert order == [0]
+
+
 class TestScenarios:
     def test_standard_queries_not_empty(self):
         assert len(STANDARD_QUERIES) > 0

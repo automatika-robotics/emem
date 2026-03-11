@@ -55,6 +55,7 @@ class HarnessRunner:
         db_path: str | None = None,
         headless: bool = False,
         resolution: int = 300,
+        exploration_mode: str = "random",
     ):
         self._env_name = env_name
         self._vlm_model = vlm_model
@@ -69,6 +70,7 @@ class HarnessRunner:
         self._db_path = db_path
         self._headless = headless
         self._resolution = resolution
+        self._exploration_mode = exploration_mode
 
     def run(self) -> HarnessReport:
         """Execute the full harness: ingestion then evaluation.
@@ -113,7 +115,7 @@ class HarnessRunner:
             frame, pos, reward, done, info = env.step(action)
 
             if step % self._vlm_every_n == 0:
-                log.info("[step %d/%d] VLM at pos=(%d, %d)...", step, self._n_steps, pos[0], pos[1])
+                log.info("[step %d/%d] VLM at pos=(%.1f, %.1f)...", step, self._n_steps, pos[0], pos[1])
 
                 t0 = time.monotonic()
                 description = vlm.describe(
@@ -201,6 +203,7 @@ class HarnessRunner:
                 headless=self._headless,
                 width=self._resolution,
                 height=self._resolution,
+                exploration_mode=self._exploration_mode,
             )
 
         from harness.environments.minigrid_adapter import MiniGridAdapter
