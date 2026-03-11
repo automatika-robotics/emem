@@ -162,8 +162,8 @@ class LoCoMoLoader:
         for i, qa in enumerate(qa_pairs):
             questions.append(BenchmarkQuestion(
                 question_id=str(qa.get("question_id", qa.get("id", i))),
-                question=qa.get("question", qa.get("query", "")),
-                answer=qa.get("answer", qa.get("response", "")),
+                question=str(qa.get("question", qa.get("query", ""))),
+                answer=str(qa.get("answer", qa.get("response", ""))),
                 category=str(qa.get("category", qa.get("type", ""))),
             ))
 
