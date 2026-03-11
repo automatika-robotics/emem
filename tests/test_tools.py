@@ -109,6 +109,44 @@ class TestTemporalQuery:
         result = tools.temporal_query(time_after="1000.0")
         assert "b" in result
 
+    def test_gist_fallback_after_consolidation(self, store, tools):
+        """When observations are archived, temporal_query falls back to gists."""
+        # Add a gist covering a recent time range (within last 5 min of t=2000)
+        gist = GistNode(
+            text="Explored a maze with gray pathways",
+            center_position=np.array([5.0, 5.0, 0.0]),
+            radius=2.0,
+            time_start=1800.0,
+            time_end=1950.0,
+            source_observation_count=4,
+            source_observation_ids=["o1", "o2", "o3", "o4"],
+        )
+        store.add_gist(gist)
+
+        # No raw observations exist — should fall back to gists
+        result = tools.temporal_query(last_n_minutes=5)
+        assert "consolidated" in result.lower()
+        assert "maze" in result
+        assert "gray pathways" in result
+
+    def test_gist_fallback_not_triggered_when_observations_exist(self, store, tools):
+        """Gist fallback should NOT trigger when observations are found."""
+        store.add_observation(_obs("live observation", ts=1900.0))
+        gist = GistNode(
+            text="This gist should not appear",
+            center_position=np.array([5.0, 5.0, 0.0]),
+            radius=1.0,
+            time_start=1800.0,
+            time_end=1950.0,
+            source_observation_count=2,
+            source_observation_ids=["x1", "x2"],
+        )
+        store.add_gist(gist)
+
+        result = tools.temporal_query(last_n_minutes=5)
+        assert "live observation" in result
+        assert "consolidated" not in result.lower()
+
 
 class TestEpisodeSummary:
     def test_basic(self, store, tools):

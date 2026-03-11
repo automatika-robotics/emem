@@ -221,7 +221,34 @@ class MemoryTools:
             source_type=source_type,
             exclude_source_type=exclude_source_type,
         )
-        return _format_observations(results)
+
+        if results:
+            return _format_observations(results)
+
+        # Fallback: observations may have been consolidated (archived).
+        # Search gists covering the same time window instead.
+        time_range = self._time_range(time_after, time_before)
+        gists = self.store.get_recent_gists(
+            time_after=time_range[0] if time_range else None,
+            time_before=time_range[1] if time_range else None,
+            last_n_seconds=last_n_seconds,
+            reference_time=self._get_time(),
+            layer=layer,
+            order=order,
+            n_results=n_results,
+        )
+        if gists:
+            lines = ["(Observations consolidated — showing summaries)"]
+            for i, g in enumerate(gists, 1):
+                pos = g.center_position
+                layer_label = g.layer_name or "cross-layer"
+                lines.append(
+                    f"{i}. [{layer_label}] ({pos[0]:.1f},{pos[1]:.1f}) "
+                    f"[{g.source_observation_count} obs] {g.text}"
+                )
+            return "\n".join(lines)
+
+        return "No observations found."
 
     # ── Tool 4: Episode Summary ───────────────────────────────────────
 
@@ -550,7 +577,7 @@ class MemoryTools:
             },
             {
                 "name": "temporal_query",
-                "description": "Find observations in a time range, chronologically ordered.",
+                "description": "Find observations in a time range, chronologically ordered. Falls back to consolidated summaries if raw observations have been archived.",
                 "parameters": {
                     "type": "object",
                     "properties": {

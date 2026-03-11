@@ -1096,6 +1096,54 @@ class MemoryStore:
         ).fetchall()
         return [self._row_to_gist(r) for r in rows]
 
+    def get_recent_gists(
+        self,
+        time_after: Optional[float] = None,
+        time_before: Optional[float] = None,
+        last_n_seconds: Optional[float] = None,
+        reference_time: Optional[float] = None,
+        layer: Optional[str] = None,
+        order: str = "newest",
+        n_results: int = 10,
+    ) -> List[GistNode]:
+        """Find gists overlapping a time range.
+
+        A gist overlaps if its ``time_end >= time_after`` and
+        ``time_start <= time_before``.
+
+        :param time_after: Start of time window.
+        :param time_before: End of time window.
+        :param last_n_seconds: Alternative — seconds before *reference_time*.
+        :param reference_time: Reference for *last_n_seconds*.
+        :param layer: Filter by layer name.
+        :param order: ``"newest"`` or ``"oldest"``.
+        :param n_results: Maximum results.
+        :returns: Matching gists.
+        :rtype: List[GistNode]
+        """
+        query = "SELECT * FROM gists WHERE 1=1"
+        params: list = []
+
+        if last_n_seconds and reference_time:
+            time_after = reference_time - last_n_seconds
+        if time_after is not None:
+            query += " AND time_end >= ?"
+            params.append(time_after)
+        if time_before is not None:
+            query += " AND time_start <= ?"
+            params.append(time_before)
+        if layer:
+            query += " AND layer_name = ?"
+            params.append(layer)
+
+        order_col = "time_end" if order == "newest" else "time_start"
+        order_dir = "DESC" if order == "newest" else "ASC"
+        query += f" ORDER BY {order_col} {order_dir} LIMIT ?"
+        params.append(n_results)
+
+        rows = self._db.execute(query, params).fetchall()
+        return [self._row_to_gist(r) for r in rows]
+
     def get_observations_for_consolidation(
         self,
         older_than: float,
