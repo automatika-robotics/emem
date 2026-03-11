@@ -3,6 +3,7 @@ import re
 from typing import Any
 
 from harness.providers.http import post_json, strip_think_tags
+from harness.providers.ollama_vlm import _is_thinking_model
 
 
 class OllamaLLMClient:
@@ -19,6 +20,7 @@ class OllamaLLMClient:
     ):
         self._model = model
         self._url = f"{base_url.rstrip('/')}/api/chat"
+        self._thinks = _is_thinking_model(model)
 
     def summarize(self, texts: list[str]) -> str:
         numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
@@ -48,7 +50,14 @@ class OllamaLLMClient:
         )
         return _parse_entities(raw)
 
-    def _chat(self, prompt: str, max_tokens: int | None = None) -> str:
+    def _chat(
+        self,
+        prompt: str,
+        max_tokens: int | None = None,
+        think: bool = True,
+    ) -> str:
+        if not think and self._thinks:
+            prompt = prompt.rstrip() + " /no_think"
         body: dict = {
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],

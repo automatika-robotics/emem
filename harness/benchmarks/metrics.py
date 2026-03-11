@@ -83,6 +83,7 @@ def compute_metrics(
             "correct_tool": qr.correct_tool,
             "answer_relevant": qr.answer_relevant,
             "latency_s": round(qr.latency_s, 3),
+            "answer": qr.answer,
         }
         for qr in query_results
     ]

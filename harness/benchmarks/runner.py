@@ -135,9 +135,12 @@ class HarnessRunner:
                 vlm_latencies.append(dt)
                 log.info("  place (%.1fs): %s", dt, place[:80])
 
-                mem.add(description, x=float(pos[0]), y=float(pos[1]), layer_name="description")
-                mem.add(place, x=float(pos[0]), y=float(pos[1]), layer_name="place")
-                n_obs += 2
+                if description.strip():
+                    mem.add(description, x=float(pos[0]), y=float(pos[1]), layer_name="description")
+                    n_obs += 1
+                if place.strip():
+                    mem.add(place, x=float(pos[0]), y=float(pos[1]), layer_name="place")
+                    n_obs += 1
 
             body = intero.step()
             for layer, text in body.items():

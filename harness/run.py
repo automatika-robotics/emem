@@ -113,6 +113,12 @@ def main():
                 f"  [{status}] {qr['query']}"
                 f" (expected={qr['expected_tool']}, got={qr['tools_used']}, {qr['latency_s']:.1f}s)"
             )
+            answer = qr.get("answer", "")
+            if answer:
+                # Indent and wrap the answer for readability
+                for line in answer.split("\n"):
+                    print(f"        {line}")
+                print()
 
 
 if __name__ == "__main__":
