@@ -7,7 +7,6 @@ from typing import Any
 
 from harness.agent.prompts import build_system_prompt
 from harness.providers.http import strip_think_tags
-from harness.providers.ollama_vlm import _is_thinking_model
 
 
 @dataclass
@@ -174,21 +173,12 @@ class ReactAgent(_BaseReactAgent):
         super().__init__(mem, max_steps)
         self._model = model
         self._url = f"{base_url.rstrip('/')}/api/chat"
-        self._thinks = _is_thinking_model(model)
 
     def _chat(self, messages: list[dict[str, str]]) -> str:
         from harness.providers.http import post_json
 
-        msgs = list(messages)
-        # Disable thinking for ReAct — the Thought/Action format is sufficient
-        if self._thinks and msgs:
-            last = msgs[-1]
-            if not last["content"].rstrip().endswith("/no_think"):
-                msgs[-1] = {**last, "content": last["content"].rstrip() + " /no_think"}
-
         data = post_json(self._url, {
-            "model": self._model, "messages": msgs, "stream": False,
-            "options": {"num_predict": 512},
+            "model": self._model, "messages": messages, "stream": False,
         }, timeout=300)
         return strip_think_tags(data["message"]["content"])
 

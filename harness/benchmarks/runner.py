@@ -119,7 +119,6 @@ class HarnessRunner:
                 description = vlm.describe(
                     frame,
                     "Describe what you see in this scene in 1-2 sentences.",
-                    max_tokens=150,
                 )
                 dt = time.monotonic() - t0
                 vlm_latencies.append(dt)
@@ -129,7 +128,7 @@ class HarnessRunner:
                 place = vlm.describe(
                     frame,
                     "What type of place or room is this? Answer in one word only.",
-                    max_tokens=20,
+                    think=False,
                 )
                 dt = time.monotonic() - t0
                 vlm_latencies.append(dt)

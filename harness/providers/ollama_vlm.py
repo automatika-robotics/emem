@@ -33,16 +33,9 @@ class OllamaVLM:
         :param image: ``(H, W, 3)`` uint8 numpy array (RGB).
         :param prompt: Text prompt for the VLM.
         :param max_tokens: Maximum tokens to generate.
-        :param think: Force thinking on/off.  ``None`` = auto (disable for
-            thinking models when *max_tokens* ≤ 200 to avoid wasting budget).
+        :param think: Force thinking on/off.  ``None`` = on for thinking models.
         :returns: Model's text response.
         """
-        # Auto-disable thinking for short outputs on thinking models
-        if think is None and self._thinks:
-            think = False if (max_tokens is not None and max_tokens <= 200) else True
-        if think is False and self._thinks:
-            prompt = prompt.rstrip() + " /no_think"
-
         b64 = encode_image_b64(image)
         body: dict = {
             "model": self._model,
@@ -51,5 +44,8 @@ class OllamaVLM:
         }
         if max_tokens is not None:
             body["options"] = {"num_predict": max_tokens}
+        # Use Ollama's top-level "think" field for thinking models
+        if think is not None and self._thinks:
+            body["think"] = think
         data = post_json(self._url, body, timeout=300)
         return strip_think_tags(data["message"]["content"])

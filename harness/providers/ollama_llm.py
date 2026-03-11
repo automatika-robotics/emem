@@ -54,10 +54,8 @@ class OllamaLLMClient:
         self,
         prompt: str,
         max_tokens: int | None = None,
-        think: bool = True,
+        think: bool | None = None,
     ) -> str:
-        if not think and self._thinks:
-            prompt = prompt.rstrip() + " /no_think"
         body: dict = {
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],
@@ -65,6 +63,8 @@ class OllamaLLMClient:
         }
         if max_tokens is not None:
             body["options"] = {"num_predict": max_tokens}
+        if think is not None and self._thinks:
+            body["think"] = think
         data = post_json(self._url, body, timeout=300)
         return strip_think_tags(data["message"]["content"])
 
