@@ -79,17 +79,15 @@ class TestBodyStatusTool:
         mem.add_body_state("72C across 4 cores", layer_name="cpu_temp", timestamp=_T - 30)
         result = mem.body_status()
         assert "Body Status:" in result
-        assert "[battery]" in result
         assert "45% remaining" in result
-        assert "[cpu_temp]" in result
         assert "72C across 4 cores" in result
 
     def test_body_status_layer_filter(self, mem):
         mem.add_body_state("45% remaining", layer_name="battery")
         mem.add_body_state("72C", layer_name="cpu_temp")
         result = mem.body_status(layers=["battery"])
-        assert "[battery]" in result
-        assert "[cpu_temp]" not in result
+        assert "45% remaining" in result
+        assert "72C" not in result
 
     def test_body_status_empty(self, mem):
         result = mem.body_status()
@@ -110,7 +108,7 @@ class TestContextIncludesBodyStatus:
         mem.add_body_state("45% remaining", layer_name="battery")
         result = mem.get_current_context()
         assert "Body Status:" in result
-        assert "[battery]" in result
+        assert "45% remaining" in result
 
 
 class TestSourceTypeFilters:

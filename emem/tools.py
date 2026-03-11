@@ -531,7 +531,7 @@ class MemoryTools:
                 age_str = f"{age_s / 60:.0f}min ago"
             else:
                 age_str = f"{age_s / 3600:.1f}h ago"
-            lines.append(f"  [{layer_name}] {obs.text} ({age_str})")
+            lines.append(f"  {obs.text} ({age_str})")
         return "\n".join(lines)
 
     def get_tool_definitions(self) -> List[Dict[str, Any]]:

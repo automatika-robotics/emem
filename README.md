@@ -116,18 +116,21 @@ eMEM is built around three complementary index structures that share a unified n
 
 ### Memory Graph
 
-The memory is structured as a typed graph with three node types and four edge types:
+The memory is structured as a typed graph with four node types and six edge types:
 
 **Nodes:**
 - **ObservationNode** -- A single perception event: text, coordinates, timestamp, layer, confidence
 - **EpisodeNode** -- A task or activity span grouping related observations
 - **GistNode** -- A consolidated summary of multiple observations, with spatial extent and time range
+- **EntityNode** -- A persistent tracked object/landmark with auto-merge by semantic similarity + spatial proximity
 
 **Edges:**
 - `BELONGS_TO` -- Observation &rarr; Episode
 - `FOLLOWS` -- Episode &rarr; Episode (temporal sequence)
 - `SUBTASK_OF` -- Episode &rarr; Episode (hierarchical nesting)
 - `SUMMARIZES` -- Gist &rarr; Observation(s)
+- `OBSERVED_IN` -- Entity &rarr; Observation (entity was seen in this observation)
+- `COOCCURS_WITH` -- Entity &harr; Entity (entities observed together)
 
 ### Memory Tiers
 
@@ -441,6 +444,100 @@ with SpatioTemporalMemory(
     print(agent.run("What places have I visited?").answer)
 
 env.close()
+```
+
+## Academic Benchmarks
+
+The `harness/benchmarks/academic/` module provides replay-based evaluation on established academic benchmarks for quantitative comparison. Unlike the live harness above, these load pre-recorded trajectories, ingest them into eMEM, answer dataset questions via a ReAct agent, and score against ground truth.
+
+### Supported Benchmarks
+
+| Benchmark | Venue | Questions | Focus | Scorer |
+|-----------|-------|-----------|-------|--------|
+| **SQA3D** | ICLR 2023 | 33.4k situated QA | Spatial reasoning | Exact Match |
+| **OpenEQA** | CVPR 2024 | 1,600+ episodic QA | Episodic memory | LLM-Match (1-5 scale) |
+| **LoCoMo** | ACL 2024 | 1,986 conversational QA | Temporal reasoning | Token F1 + BLEU-1 |
+
+### Ablation Study
+
+Five configurations isolate the contribution of each eMEM component:
+
+| Ablation | What it removes |
+|----------|----------------|
+| `full` | Nothing (baseline) |
+| `vector_only` | All tools except `semantic_search` |
+| `no_spatial` | `spatial_query`, `locate`, `recall` tools |
+| `no_consolidation` | Gist generation and archival |
+| `flat_layer` | Multi-layer support (all observations use `layer_name="default"`) |
+
+### Running Benchmarks
+
+```bash
+# SQA3D (needs ScanNet annotations in data_dir)
+python -m harness.run_benchmark \
+  --dataset sqa3d --data-dir ./data/sqa3d \
+  --max-samples 50 --ablation full
+
+# LoCoMo (text-only, no spatial data)
+python -m harness.run_benchmark \
+  --dataset locomo --data-dir ./data/locomo \
+  --max-samples 3 --ablation full
+
+# OpenEQA (needs HM3D/ScanNet frames)
+python -m harness.run_benchmark \
+  --dataset open-eqa --data-dir ./data/open-eqa \
+  --max-samples 20 --ablation full
+
+# Full ablation sweep with JSON output
+python -m harness.run_benchmark \
+  --dataset sqa3d --data-dir ./data/sqa3d \
+  --ablation full,vector_only,no_spatial,no_consolidation,flat_layer \
+  --json > results/sqa3d_ablation.json
+
+# Use Gemini provider instead of Ollama
+python -m harness.run_benchmark \
+  --dataset locomo --data-dir ./data/locomo \
+  --provider gemini --embed-model text-embedding-004 \
+  --llm-model gemini-2.0-flash-lite
+```
+
+### CLI Options
+
+```
+--dataset         sqa3d | locomo | open-eqa
+--data-dir        Path to dataset directory
+--ablation        Comma-separated ablation names (default: full)
+--max-samples     Limit number of samples evaluated
+--provider        ollama | gemini (default: ollama)
+--embed-model     Embedding model (default: nomic-embed-text-v2-moe:latest)
+--llm-model       LLM for agent + consolidation (default: qwen3.5:4b)
+--judge-model     LLM for scoring (OpenEQA only, default: qwen3.5:4b)
+--json            Output JSON report instead of formatted tables
+-v                Verbose logging
+```
+
+### Data Directory Layouts
+
+**SQA3D:**
+```
+data/sqa3d/
+  question/balanced/v1_balanced_questions_val_scannetv2.json
+  answer/balanced/v1_balanced_answers_val_scannetv2.json
+  scannet/{scene_id}/{scene_id}_aligned_bbox.npy
+  scannet/{scene_id}/{scene_id}_sem_labels.json
+```
+
+**LoCoMo:**
+```
+data/locomo/
+  locomo.json   # array of conversations with sessions + qa_pairs
+```
+
+**OpenEQA:**
+```
+data/open-eqa/
+  open-eqa-v0.json
+  frames/{hm3d-v0|scannet-v0}/{episode_history}/*-rgb.png
 ```
 
 ## Development

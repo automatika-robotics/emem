@@ -1,0 +1,266 @@
+import logging
+import tempfile
+import time
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional
+
+from harness.benchmarks.academic.ablation import AblationConfig
+from harness.benchmarks.academic.trajectory import BenchmarkQuestion, BenchmarkSample
+
+log = logging.getLogger("harness.academic")
+
+
+@dataclass
+class QuestionResult:
+    """Result for a single benchmark question."""
+
+    question_id: str
+    question: str
+    ground_truth: str
+    prediction: str
+    scores: Dict[str, Any] = field(default_factory=dict)
+    tools_used: List[str] = field(default_factory=list)
+    latency_s: float = 0.0
+
+
+@dataclass
+class SampleResult:
+    """Result for a single benchmark sample (scene/episode)."""
+
+    sample_id: str
+    scene_id: str
+    question_results: List[QuestionResult] = field(default_factory=list)
+    ingestion_time_s: float = 0.0
+    n_observations: int = 0
+
+
+@dataclass
+class BenchmarkReport:
+    """Full report from a benchmark run."""
+
+    dataset: str
+    ablation: str
+    sample_results: List[SampleResult] = field(default_factory=list)
+    total_time_s: float = 0.0
+
+    @property
+    def all_scores(self) -> List[Dict[str, Any]]:
+        return [qr.scores for sr in self.sample_results for qr in sr.question_results]
+
+    def mean_score(self, key: str = "score") -> float:
+        """Compute the mean of a score key across all questions.
+
+        :param key: Score dict key to average (default ``"score"``).
+        :returns: Mean value, or 0 if no scores.
+        """
+        scores = [s[key] for s in self.all_scores if key in s]
+        return sum(scores) / len(scores) if scores else 0.0
+
+    def summary(self) -> Dict[str, Any]:
+        """Return a compact summary dict suitable for JSON serialization.
+
+        :returns: Dict with dataset, ablation, counts, and mean metrics.
+        """
+        all_s = self.all_scores
+        keys: set[str] = set()
+        for s in all_s:
+            keys.update(s.keys())
+        means: Dict[str, float] = {}
+        for k in sorted(keys):
+            vals = [s[k] for s in all_s if k in s and isinstance(s[k], (int, float))]
+            if vals:
+                means[k] = sum(vals) / len(vals)
+        return {
+            "dataset": self.dataset,
+            "ablation": self.ablation,
+            "n_questions": len(all_s),
+            "n_samples": len(self.sample_results),
+            "total_time_s": round(self.total_time_s, 1),
+            "metrics": {k: round(v, 2) for k, v in means.items()},
+        }
+
+
+class _AblatedMemory:
+    """Wrapper that restricts tool access based on ablation config."""
+
+    def __init__(self, mem: Any, ablation: AblationConfig):
+        self._mem = mem
+        self._ablation = ablation
+
+    def get_tool_definitions(self) -> List[Dict[str, Any]]:
+        return self._ablation.filter_tool_definitions(
+            self._mem.get_tool_definitions()
+        )
+
+    def dispatch_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> str:
+        if tool_name not in self._ablation.available_tools:
+            return f"Tool '{tool_name}' is not available in this configuration."
+        return self._mem.dispatch_tool_call(tool_name, arguments)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._mem, name)
+
+
+class BenchmarkRunner:
+    """Runs academic benchmark evaluation via trajectory replay."""
+
+    def __init__(
+        self,
+        loader: Any,
+        scorer: Any,
+        ablation: AblationConfig,
+        embedding_provider: Any,
+        llm_client: Any = None,
+        agent_factory: Optional[Callable[[Any], Any]] = None,
+        max_samples: Optional[int] = None,
+    ):
+        """
+        :param loader: Dataset loader yielding :class:`BenchmarkSample` instances.
+        :param scorer: Scorer implementing the :class:`Scorer` protocol.
+        :param ablation: Ablation configuration to apply.
+        :param embedding_provider: Embedding provider for eMEM.
+        :param llm_client: LLM client for consolidation (optional).
+        :param agent_factory: ``fn(mem) -> agent`` with a ``.run(query)`` method.
+            Defaults to :class:`ReactAgent` via Ollama.
+        :param max_samples: Maximum number of samples to evaluate.
+        """
+        self._loader = loader
+        self._scorer = scorer
+        self._ablation = ablation
+        self._embedder = embedding_provider
+        self._llm = llm_client
+        self._agent_factory = agent_factory
+        self._max_samples = max_samples
+
+    def run(self) -> BenchmarkReport:
+        """Run the full benchmark evaluation.
+
+        :returns: Report with per-sample and aggregate results.
+        """
+        from emem import SpatioTemporalMemory
+
+        report = BenchmarkReport(
+            dataset=self._loader.name,
+            ablation=self._ablation.name,
+        )
+        t_start = time.monotonic()
+        count = 0
+
+        for sample in self._loader.load():
+            if self._max_samples is not None and count >= self._max_samples:
+                break
+
+            log.info(
+                "[%s] sample=%s scene=%s frames=%d questions=%d",
+                self._ablation.name, sample.sample_id, sample.scene_id,
+                len(sample.trajectory), len(sample.questions),
+            )
+
+            sr = self._run_sample(sample, SpatioTemporalMemory)
+            report.sample_results.append(sr)
+            count += 1
+
+        report.total_time_s = time.monotonic() - t_start
+        log.info(
+            "[%s] Done: %d samples, mean_score=%.1f, time=%.1fs",
+            self._ablation.name, count,
+            report.mean_score(), report.total_time_s,
+        )
+        return report
+
+    def _run_sample(self, sample: BenchmarkSample, mem_cls: type) -> SampleResult:
+        """Ingest a single sample's trajectory, answer its questions, and score.
+
+        :param sample: The benchmark sample to evaluate.
+        :param mem_cls: SpatioTemporalMemory class (passed to allow testing).
+        :returns: Per-sample result with question scores.
+        """
+        db_path = tempfile.mktemp(suffix=".db")
+        mem = mem_cls(
+            db_path=db_path,
+            embedding_provider=self._embedder,
+            llm_client=self._llm,
+        )
+
+        sr = SampleResult(sample_id=sample.sample_id, scene_id=sample.scene_id)
+
+        try:
+            t_ingest = time.monotonic()
+            mem.start_episode(sample.scene_id)
+
+            for frame in sample.trajectory:
+                layer = frame.layer_name
+                if not self._ablation.use_multi_layer:
+                    layer = "default"
+                mem.add(
+                    text=frame.text,
+                    x=frame.position[0],
+                    y=frame.position[1],
+                    z=frame.position[2],
+                    timestamp=frame.timestamp,
+                    layer_name=layer,
+                )
+                sr.n_observations += 1
+
+            mem.end_episode(consolidate=self._ablation.use_consolidation)
+            sr.ingestion_time_s = time.monotonic() - t_ingest
+
+            if sample.agent_position is not None:
+                mem.add(
+                    text=f"Agent is currently here. {sample.agent_situation}",
+                    x=sample.agent_position[0],
+                    y=sample.agent_position[1],
+                    z=sample.agent_position[2],
+                    layer_name="agent_position",
+                )
+
+            ablated_mem = _AblatedMemory(mem, self._ablation)
+            agent = self._make_agent(ablated_mem)
+
+            for bq in sample.questions:
+                qr = self._run_question(agent, bq)
+                sr.question_results.append(qr)
+                log.info(
+                    "  q=%s score=%.0f pred=%s",
+                    bq.question_id, qr.scores.get("score", -1),
+                    qr.prediction[:60],
+                )
+
+        finally:
+            mem.close()
+
+        return sr
+
+    def _run_question(self, agent: Any, bq: BenchmarkQuestion) -> QuestionResult:
+        """Run the agent on a single question and score its answer.
+
+        :param agent: Agent instance with a ``.run(query)`` method.
+        :param bq: The benchmark question.
+        :returns: Scored question result.
+        """
+        t0 = time.monotonic()
+        result = agent.run(bq.question)
+        latency = time.monotonic() - t0
+
+        scores = self._scorer.score(bq.question, result.answer, bq.answer)
+
+        return QuestionResult(
+            question_id=bq.question_id,
+            question=bq.question,
+            ground_truth=bq.answer,
+            prediction=result.answer,
+            scores=scores,
+            tools_used=result.tools_used,
+            latency_s=latency,
+        )
+
+    def _make_agent(self, mem: Any) -> Any:
+        """Create an agent for the given memory instance.
+
+        :param mem: Memory instance (possibly ablated).
+        :returns: Agent with a ``.run(query)`` method.
+        """
+        if self._agent_factory is not None:
+            return self._agent_factory(mem)
+        from harness.agent.react_agent import ReactAgent
+        return ReactAgent(mem)
