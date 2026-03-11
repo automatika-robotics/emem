@@ -1,5 +1,8 @@
 import json
+import logging
 import os
+import re
+from datetime import datetime
 from typing import Any, Dict, Iterator, List, Optional
 
 from harness.benchmarks.academic.trajectory import (
@@ -8,18 +11,39 @@ from harness.benchmarks.academic.trajectory import (
     TrajectoryFrame,
 )
 
+log = logging.getLogger(__name__)
+
+
+def _parse_locomo_timestamp(ts_str: str) -> float:
+    """Parse a LoCoMo timestamp string like ``"1:56 pm on 8 May, 2023"``.
+
+    :param ts_str: Raw timestamp string from the dataset.
+    :returns: Unix-style timestamp (seconds). Falls back to 0.0 on failure.
+    """
+    try:
+        # "1:56 pm on 8 May, 2023" -> parse with datetime
+        cleaned = ts_str.replace(" on ", " ").strip()
+        dt = datetime.strptime(cleaned, "%I:%M %p %d %B, %Y")
+        return dt.timestamp()
+    except (ValueError, AttributeError):
+        return 0.0
+
 
 class LoCoMoLoader:
     """Loader for the LoCoMo conversational memory benchmark.
 
     All observations are placed at origin ``(0, 0, 0)`` since LoCoMo
     tests temporal/semantic retrieval only (no spatial data).
+
+    The dataset file ``locomo10.json`` is a list of 10 conversations.
+    Each conversation has sessions keyed as ``session_1``, ``session_2``,
+    etc., with corresponding ``session_1_date_time`` timestamps. QA pairs
+    are in the ``qa`` key.
     """
 
     def __init__(self, data_dir: str, max_conversations: Optional[int] = None):
         """
-        :param data_dir: Directory containing ``locomo.json`` or individual
-            conversation JSON files.
+        :param data_dir: Directory containing ``locomo10.json`` (or ``locomo.json``).
         :param max_conversations: Maximum number of conversations to load.
         """
         self._data_dir = data_dir
@@ -38,7 +62,7 @@ class LoCoMoLoader:
             if self._max_conversations is not None and count >= self._max_conversations:
                 break
 
-            conv_id = str(conv.get("conversation_id", count))
+            conv_id = str(conv.get("sample_id", count))
             trajectory = self._build_trajectory(conv)
             questions = self._build_questions(conv)
 
@@ -56,20 +80,21 @@ class LoCoMoLoader:
     def _load_data(self) -> List[Dict[str, Any]]:
         """Load conversation data from disk.
 
-        Supports a single ``locomo.json`` file (array or ``{"conversations": [...]}``
-        format) or a directory of individual JSON files.
+        Tries ``locomo10.json`` first (official filename), then ``locomo.json``,
+        then falls back to loading individual JSON files.
 
         :returns: List of conversation dicts.
         """
-        single_path = os.path.join(self._data_dir, "locomo.json")
-        if os.path.exists(single_path):
-            with open(single_path) as f:
-                data = json.load(f)
-            if isinstance(data, list):
-                return data
-            if "conversations" in data:
-                return data["conversations"]
-            return [data]
+        for filename in ("locomo10.json", "locomo.json"):
+            path = os.path.join(self._data_dir, filename)
+            if os.path.exists(path):
+                with open(path) as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    return data
+                if "conversations" in data:
+                    return data["conversations"]
+                return [data]
 
         conversations: List[Dict[str, Any]] = []
         for fname in sorted(os.listdir(self._data_dir)):
@@ -80,26 +105,41 @@ class LoCoMoLoader:
 
     @staticmethod
     def _build_trajectory(conv: Dict[str, Any]) -> List[TrajectoryFrame]:
-        """Convert conversation turns into trajectory frames at origin.
+        """Convert conversation sessions into trajectory frames at origin.
 
-        :param conv: Conversation dict with ``"sessions"`` or ``"conversation"`` key.
+        Handles the LoCoMo format where sessions are keyed as ``session_1``,
+        ``session_2``, etc. within the ``conversation`` dict, with timestamps
+        in ``session_1_date_time``, etc.
+
+        :param conv: Conversation dict with ``"conversation"`` key.
         :returns: List of frames, one per turn.
         """
         frames: List[TrajectoryFrame] = []
-        sessions = conv.get("sessions", [])
-        if not sessions and "conversation" in conv:
-            sessions = [{"turns": conv["conversation"]}]
+        conversation = conv.get("conversation", conv)
+
+        # Find session keys: session_1, session_2, ...
+        session_nums = sorted(
+            int(m.group(1))
+            for key in conversation
+            if (m := re.match(r"session_(\d+)$", key))
+        )
 
         global_turn = 0
-        for session in sessions:
-            turns = session.get("turns", session.get("messages", []))
-            for turn in turns:
-                speaker = turn.get("speaker", turn.get("role", "unknown"))
-                text = turn.get("text", turn.get("content", ""))
-                ts = float(turn.get("timestamp", global_turn * 60.0))
+        for num in session_nums:
+            session_key = f"session_{num}"
+            ts_key = f"session_{num}_date_time"
+
+            turns = conversation.get(session_key, [])
+            session_ts = _parse_locomo_timestamp(conversation.get(ts_key, ""))
+
+            for turn_idx, turn in enumerate(turns):
+                speaker = turn.get("speaker", "unknown")
+                text = turn.get("text", "")
+                # Use session timestamp + offset per turn within session
+                ts = session_ts + turn_idx * 30.0 if session_ts > 0 else global_turn * 60.0
 
                 frames.append(TrajectoryFrame(
-                    frame_id=f"turn_{global_turn}",
+                    frame_id=turn.get("dia_id", f"turn_{global_turn}"),
                     position=(0.0, 0.0, 0.0),
                     timestamp=ts,
                     text=f"[{speaker}]: {text}",
@@ -113,18 +153,18 @@ class LoCoMoLoader:
     def _build_questions(conv: Dict[str, Any]) -> List[BenchmarkQuestion]:
         """Extract QA pairs from conversation data.
 
-        :param conv: Conversation dict with ``"qa_pairs"`` or ``"questions"`` key.
+        :param conv: Conversation dict with ``"qa"`` key.
         :returns: List of benchmark questions.
         """
         questions: List[BenchmarkQuestion] = []
-        qa_pairs = conv.get("qa_pairs", conv.get("questions", []))
+        qa_pairs = conv.get("qa", conv.get("qa_pairs", conv.get("questions", [])))
 
         for i, qa in enumerate(qa_pairs):
             questions.append(BenchmarkQuestion(
                 question_id=str(qa.get("question_id", qa.get("id", i))),
                 question=qa.get("question", qa.get("query", "")),
                 answer=qa.get("answer", qa.get("response", "")),
-                category=qa.get("category", qa.get("type", "")),
+                category=str(qa.get("category", qa.get("type", ""))),
             ))
 
         return questions

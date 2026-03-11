@@ -521,10 +521,10 @@ python -m harness.run_benchmark \
 **SQA3D:**
 ```
 data/sqa3d/
-  question/balanced/v1_balanced_questions_val_scannetv2.json
-  answer/balanced/v1_balanced_answers_val_scannetv2.json
+  sqa_task/balanced/v1_balanced_questions_val_scannetv2.json
+  sqa_task/balanced/v1_balanced_sqa_annotations_val_scannetv2.json
   scannet/{scene_id}/{scene_id}_aligned_bbox.npy
-  scannet/{scene_id}/{scene_id}_sem_labels.json
+  scannetv2-labels.combined.tsv
 ```
 
 **LoCoMo:**

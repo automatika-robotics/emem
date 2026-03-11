@@ -10,11 +10,12 @@ class TestLoCoMoLoader:
     def _make_data(self, tmpdir, n_conversations=2, n_turns=5, n_questions=3):
         conversations = []
         for c in range(n_conversations):
+            # Build session turns in the actual LoCoMo format
             turns = [
                 {
+                    "dia_id": f"d{c}_{t}",
                     "speaker": "Alice" if t % 2 == 0 else "Bob",
                     "text": f"Turn {t} of conversation {c}",
-                    "timestamp": t * 60.0,
                 }
                 for t in range(n_turns)
             ]
@@ -27,13 +28,17 @@ class TestLoCoMoLoader:
                 }
                 for q in range(n_questions)
             ]
+            # Actual LoCoMo format: sessions as dict keys within "conversation"
             conversations.append({
-                "conversation_id": f"conv_{c}",
-                "sessions": [{"turns": turns}],
-                "qa_pairs": qa,
+                "sample_id": f"conv_{c}",
+                "conversation": {
+                    "session_1": turns,
+                    "session_1_date_time": "1:00 pm on 8 May, 2023",
+                },
+                "qa": qa,
             })
 
-        path = os.path.join(tmpdir, "locomo.json")
+        path = os.path.join(tmpdir, "locomo10.json")
         with open(path, "w") as f:
             json.dump(conversations, f)
 
@@ -91,40 +96,38 @@ class TestSQA3DLoader:
                     "scene_id": scene_id,
                     "question": f"What is near position {q}?",
                     "situation": f"I am standing in scene {s}",
-                    "position": {"x": float(q), "y": 0.0, "z": 0.0},
                 })
                 annotations.append({
                     "question_id": qid,
+                    "scene_id": scene_id,
                     "answers": [
                         {"answer": "chair", "answer_confidence": "yes"},
                         {"answer": "table", "answer_confidence": "maybe"},
                     ],
+                    "position": {"x": float(q), "y": 0.0, "z": 0.0},
+                    "question_type": "spatial",
                 })
 
+            # Create scene object bboxes
             scene_dir = os.path.join(tmpdir, "scannet", scene_id)
             os.makedirs(scene_dir, exist_ok=True)
 
             bboxes = np.zeros((n_objects, 8), dtype=np.float64)
-            labels = {}
             for o in range(n_objects):
                 bboxes[o, :3] = [float(o), float(o), 0.0]
                 bboxes[o, 3:6] = [1.0, 1.0, 1.0]
-                bboxes[o, 6] = o
-                bboxes[o, 7] = o
-                labels[o] = f"object_{o}"
+                bboxes[o, 6] = o  # label_id
+                bboxes[o, 7] = o  # obj_id
 
             np.save(os.path.join(scene_dir, f"{scene_id}_aligned_bbox.npy"), bboxes)
-            with open(os.path.join(scene_dir, f"{scene_id}_sem_labels.json"), "w") as f:
-                json.dump(labels, f)
 
-        q_dir = os.path.join(tmpdir, "question", "balanced")
-        a_dir = os.path.join(tmpdir, "answer", "balanced")
-        os.makedirs(q_dir, exist_ok=True)
-        os.makedirs(a_dir, exist_ok=True)
+        # SQA3D file layout: sqa_task/balanced/
+        sqa_dir = os.path.join(tmpdir, "sqa_task", "balanced")
+        os.makedirs(sqa_dir, exist_ok=True)
 
-        with open(os.path.join(q_dir, "v1_balanced_questions_val_scannetv2.json"), "w") as f:
+        with open(os.path.join(sqa_dir, "v1_balanced_questions_val_scannetv2.json"), "w") as f:
             json.dump({"questions": questions}, f)
-        with open(os.path.join(a_dir, "v1_balanced_answers_val_scannetv2.json"), "w") as f:
+        with open(os.path.join(sqa_dir, "v1_balanced_sqa_annotations_val_scannetv2.json"), "w") as f:
             json.dump({"annotations": annotations}, f)
 
     def test_load_scenes(self):

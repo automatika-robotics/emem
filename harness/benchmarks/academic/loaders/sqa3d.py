@@ -1,4 +1,6 @@
+import csv
 import json
+import logging
 import os
 from collections import defaultdict
 from typing import Any, Dict, Iterator, List, Optional, Tuple
@@ -11,13 +13,52 @@ from harness.benchmarks.academic.trajectory import (
     TrajectoryFrame,
 )
 
+log = logging.getLogger(__name__)
+
+# NYU40 label ID -> human-readable name, loaded once from the TSV
+_nyu40_cache: Optional[Dict[int, str]] = None
+
+
+def _load_nyu40_labels(tsv_path: str) -> Dict[int, str]:
+    """Load NYU40 label mapping from ``scannetv2-labels.combined.tsv``.
+
+    :param tsv_path: Path to the TSV file.
+    :returns: Mapping of NYU40 label ID to label name.
+    """
+    global _nyu40_cache
+    if _nyu40_cache is not None:
+        return _nyu40_cache
+
+    label_map: Dict[int, str] = {}
+    with open(tsv_path, newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        for row in reader:
+            try:
+                nyu_id = int(row["nyu40id"])
+                label_map[nyu_id] = row["nyu40class"]
+            except (KeyError, ValueError):
+                continue
+    _nyu40_cache = label_map
+    return label_map
+
 
 class SQA3DLoader:
     """Loader for the SQA3D situated question answering dataset.
 
-    Loads SQA3D questions and ScanNet object annotations, yielding one
-    :class:`BenchmarkSample` per question (each with its own agent position).
-    Questions sharing a scene share the same trajectory.
+    Yields one :class:`BenchmarkSample` per question. Questions sharing a
+    scene reuse the same trajectory to avoid redundant object loading.
+
+    Expected data directory layout::
+
+        data_dir/
+            sqa_task/
+                balanced/
+                    v1_balanced_questions_{split}_scannetv2.json
+                    v1_balanced_sqa_annotations_{split}_scannetv2.json
+            scannet/
+                {scene_id}/
+                    {scene_id}_aligned_bbox.npy
+            scannetv2-labels.combined.tsv
     """
 
     def __init__(
@@ -27,8 +68,8 @@ class SQA3DLoader:
         max_scenes: Optional[int] = None,
     ):
         """
-        :param data_dir: Root directory containing ``question/``, ``answer/``,
-            and ``scannet/`` subdirectories.
+        :param data_dir: Root directory containing ``sqa_task/`` and
+            ``scannet/`` subdirectories.
         :param split: Dataset split (``"train"``, ``"val"``, or ``"test"``).
         :param max_scenes: Maximum number of scenes to load.
         """
@@ -55,6 +96,7 @@ class SQA3DLoader:
 
             trajectory = self._load_scene_objects(scene_id)
             if not trajectory:
+                log.warning("No scene objects for %s, skipping", scene_id)
                 continue
 
             for q_data in scene_questions:
@@ -76,17 +118,20 @@ class SQA3DLoader:
             scene_count += 1
 
     def _load_questions(self) -> Dict[str, List[Dict[str, Any]]]:
-        """Load and group questions by scene_id.
+        """Load questions and annotations, group by scene_id.
+
+        Questions come from the questions file; answers, positions, and
+        rotations come from the annotations file (keyed by ``question_id``).
 
         :returns: Mapping of scene_id to list of question dicts.
         """
         q_path = os.path.join(
-            self._data_dir, "question", "balanced",
+            self._data_dir, "sqa_task", "balanced",
             f"v1_balanced_questions_{self._split}_scannetv2.json",
         )
         a_path = os.path.join(
-            self._data_dir, "answer", "balanced",
-            f"v1_balanced_answers_{self._split}_scannetv2.json",
+            self._data_dir, "sqa_task", "balanced",
+            f"v1_balanced_sqa_annotations_{self._split}_scannetv2.json",
         )
 
         with open(q_path) as f:
@@ -94,7 +139,8 @@ class SQA3DLoader:
         with open(a_path) as f:
             a_data = json.load(f)
 
-        answers: Dict[str, Dict[str, Any]] = {}
+        # Build annotation lookup: question_id -> {answer, position, ...}
+        annotations: Dict[str, Dict[str, Any]] = {}
         for ann in a_data.get("annotations", []):
             qid = str(ann["question_id"])
             ann_answers = ann.get("answers", [{"answer": ""}])
@@ -103,27 +149,34 @@ class SQA3DLoader:
                 key=lambda a: 1.0 if a.get("answer_confidence") == "yes" else 0.0,
             )
             extra = [a["answer"] for a in ann_answers if a["answer"] != best["answer"]]
-            answers[qid] = {"answer": best["answer"], "extra_answers": extra}
+
+            # Position is in the annotations file
+            position: Optional[Tuple[float, float, float]] = None
+            if "position" in ann:
+                p = ann["position"]
+                position = (float(p.get("x", 0)), float(p.get("y", 0)), float(p.get("z", 0)))
+
+            annotations[qid] = {
+                "answer": best["answer"],
+                "extra_answers": extra,
+                "position": position,
+                "question_type": ann.get("question_type", ""),
+            }
 
         by_scene: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for q in q_data.get("questions", []):
             qid = str(q["question_id"])
             scene_id = q["scene_id"]
+            ann = annotations.get(qid, {"answer": "", "extra_answers": [], "position": None, "question_type": ""})
 
-            position: Optional[Tuple[float, float, float]] = None
-            if "position" in q:
-                p = q["position"]
-                position = (float(p.get("x", 0)), float(p.get("y", 0)), float(p.get("z", 0)))
-
-            ans = answers.get(qid, {"answer": "", "extra_answers": []})
             by_scene[scene_id].append({
                 "question_id": qid,
                 "question": q["question"],
-                "answer": ans["answer"],
-                "extra_answers": ans["extra_answers"],
+                "answer": ann["answer"],
+                "extra_answers": ann["extra_answers"],
                 "situation": q.get("situation", ""),
-                "position": position,
-                "question_type": q.get("question_type", ""),
+                "position": ann["position"],
+                "question_type": ann["question_type"],
             })
 
         return dict(by_scene)
@@ -132,24 +185,22 @@ class SQA3DLoader:
         """Load ScanNet object annotations as trajectory frames.
 
         Each object's bounding box center becomes a :class:`TrajectoryFrame`
-        with the object label as text.
+        with the NYU40 label name as text. The bbox array has shape
+        ``(N, 8)``: ``cx, cy, cz, dx, dy, dz, label_id, obj_id``.
 
-        :param scene_id: ScanNet scene identifier.
-        :returns: List of frames, one per scene object. Empty if files missing.
+        :param scene_id: ScanNet scene identifier (e.g. ``"scene0380_00"``).
+        :returns: List of frames, one per object. Empty if bbox file missing.
         """
         scene_dir = os.path.join(self._data_dir, "scannet", scene_id)
         bbox_path = os.path.join(scene_dir, f"{scene_id}_aligned_bbox.npy")
-        labels_path = os.path.join(scene_dir, f"{scene_id}_sem_labels.json")
 
         if not os.path.exists(bbox_path):
             return []
 
         bboxes = np.load(bbox_path)
-        label_map: Dict[int, str] = {}
-        if os.path.exists(labels_path):
-            with open(labels_path) as f:
-                raw = json.load(f)
-                label_map = {int(k): v for k, v in raw.items()}
+
+        # Load NYU40 label names
+        label_map = self._get_label_map()
 
         frames: List[TrajectoryFrame] = []
         for i, bbox in enumerate(bboxes):
@@ -166,3 +217,18 @@ class SQA3DLoader:
             ))
 
         return frames
+
+    def _get_label_map(self) -> Dict[int, str]:
+        """Load NYU40 label mapping, trying multiple locations.
+
+        :returns: Mapping of NYU40 label ID to human-readable name.
+        """
+        candidates = [
+            os.path.join(self._data_dir, "scannetv2-labels.combined.tsv"),
+            os.path.join(self._data_dir, "scannet", "meta_data", "scannetv2-labels.combined.tsv"),
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                return _load_nyu40_labels(path)
+        log.warning("NYU40 label TSV not found, using numeric label IDs")
+        return {}
