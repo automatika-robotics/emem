@@ -153,6 +153,7 @@ class AI2ThorAdapter:
             z=wp["z"],
             rotation=dict(x=0, y=rotation, z=0),
             horizon=0.0,
+            standing=True,
         )
         return event
 
