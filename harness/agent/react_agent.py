@@ -97,10 +97,12 @@ def _extract_json(text: str) -> dict[str, Any] | None:
 class _BaseReactAgent(ABC):
     """Base ReAct loop. Subclasses provide :meth:`_chat`."""
 
-    def __init__(self, mem: Any, max_steps: int = 5):
+    def __init__(self, mem: Any, max_steps: int = 5, system_prompt: str | None = None):
         self._mem = mem
         self._max_steps = max_steps
-        self._system_prompt = build_system_prompt(mem.get_tool_definitions())
+        self._system_prompt = system_prompt or build_system_prompt(
+            mem.get_tool_definitions()
+        )
 
     def run(self, query: str) -> AgentResult:
         """Run the ReAct loop for a user query.
@@ -161,6 +163,8 @@ class ReactAgent(_BaseReactAgent):
     :param model: Ollama model name.
     :param base_url: Ollama server URL.
     :param max_steps: Maximum ReAct iterations.
+    :param system_prompt: Custom system prompt. If ``None``, uses the default
+        ReAct prompt built from the memory's tool definitions.
     """
 
     def __init__(
@@ -169,8 +173,9 @@ class ReactAgent(_BaseReactAgent):
         model: str = "qwen3.5:4b",
         base_url: str = "http://localhost:11434",
         max_steps: int = 5,
+        system_prompt: str | None = None,
     ):
-        super().__init__(mem, max_steps)
+        super().__init__(mem, max_steps, system_prompt)
         self._model = model
         self._url = f"{base_url.rstrip('/')}/api/chat"
 
@@ -190,6 +195,8 @@ class GeminiReactAgent(_BaseReactAgent):
     :param model: Gemini model name.
     :param api_key: Gemini API key (falls back to ``GEMINI_API_KEY`` env var).
     :param max_steps: Maximum ReAct iterations.
+    :param system_prompt: Custom system prompt. If ``None``, uses the default
+        ReAct prompt built from the memory's tool definitions.
     """
 
     def __init__(
@@ -198,8 +205,9 @@ class GeminiReactAgent(_BaseReactAgent):
         model: str = "gemini-2.0-flash-lite",
         api_key: str | None = None,
         max_steps: int = 5,
+        system_prompt: str | None = None,
     ):
-        super().__init__(mem, max_steps)
+        super().__init__(mem, max_steps, system_prompt)
         self._model = model
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
         if not self._api_key:

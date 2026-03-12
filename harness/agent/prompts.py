@@ -1,11 +1,10 @@
-from typing import Any
+from typing import Any, Optional
 
-_SYSTEM_TEMPLATE = """\
+_PREAMBLE = """\
 You are a memory-augmented robot assistant. You have access to a spatio-temporal \
-memory system with the following tools:
+memory system with the following tools:"""
 
-{tools}
-
+_REACT_FORMAT = """\
 To use a tool, respond in EXACTLY this format:
 
 Thought: <your reasoning about what to do>
@@ -37,16 +36,15 @@ Rules:
 - Action Input must be valid JSON.
 - Prefer answering with a SINGLE tool call. Only chain tools if the first result is genuinely insufficient.
 - After receiving an Observation, give a Final Answer unless the result was empty or wrong.
-- Be concise in your Final Answer.
-"""
+- Be concise in your Final Answer."""
 
 
-def build_system_prompt(tool_definitions: list[dict[str, Any]]) -> str:
-    """Build the ReAct system prompt from eMEM tool definitions.
+def format_tool_definitions(tool_definitions: list[dict[str, Any]]) -> str:
+    """Format eMEM tool definitions as a human-readable block.
 
     :param tool_definitions: Output of
         :meth:`~emem.SpatioTemporalMemory.get_tool_definitions`.
-    :returns: Complete system prompt string.
+    :returns: Formatted tool description string.
     """
     parts: list[str] = []
     for tool in tool_definitions:
@@ -65,4 +63,21 @@ def build_system_prompt(tool_definitions: list[dict[str, Any]]) -> str:
         param_block = "\n".join(param_lines) if param_lines else "    (no parameters)"
         parts.append(f"  {name}: {desc}\n  Parameters:\n{param_block}")
 
-    return _SYSTEM_TEMPLATE.format(tools="\n\n".join(parts))
+    return "\n\n".join(parts)
+
+
+def build_system_prompt(
+    tool_definitions: list[dict[str, Any]],
+    preamble: Optional[str] = None,
+) -> str:
+    """Build the ReAct system prompt from eMEM tool definitions.
+
+    :param tool_definitions: Output of
+        :meth:`~emem.SpatioTemporalMemory.get_tool_definitions`.
+    :param preamble: Custom preamble text placed before the tool list.
+        If ``None``, uses the default robot assistant preamble.
+    :returns: Complete system prompt string.
+    """
+    intro = preamble if preamble is not None else _PREAMBLE
+    tools = format_tool_definitions(tool_definitions)
+    return f"{intro}\n\n{tools}\n\n{_REACT_FORMAT}"

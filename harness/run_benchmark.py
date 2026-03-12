@@ -81,20 +81,74 @@ def _make_providers(provider: str, embed_model: str, llm_model: str, **kwargs: A
     raise ValueError(f"Unknown provider: {provider!r}")
 
 
-def _make_agent_factory(provider: str, agent_kwargs: Dict[str, Any]) -> Any:
+def _make_agent_factory(
+    provider: str,
+    agent_kwargs: Dict[str, Any],
+    system_preamble: Optional[str] = None,
+) -> Any:
     """Create an agent factory function for the given provider.
 
     :param provider: ``"ollama"`` or ``"gemini"``.
     :param agent_kwargs: Keyword arguments passed to the agent constructor.
+    :param system_preamble: Custom system prompt preamble. If ``None``, the
+        agent uses the default preamble.
     :returns: Callable that takes a memory instance and returns an agent.
     """
     def factory(mem: Any) -> Any:
+        system_prompt = None
+        if system_preamble is not None:
+            from harness.agent.prompts import build_system_prompt
+            system_prompt = build_system_prompt(
+                mem.get_tool_definitions(), preamble=system_preamble,
+            )
         if provider == "gemini":
             from harness.agent.react_agent import GeminiReactAgent
-            return GeminiReactAgent(mem, **agent_kwargs)
+            return GeminiReactAgent(mem, system_prompt=system_prompt, **agent_kwargs)
         from harness.agent.react_agent import ReactAgent
-        return ReactAgent(mem, **agent_kwargs)
+        return ReactAgent(mem, system_prompt=system_prompt, **agent_kwargs)
     return factory
+
+
+_QUESTION_TEMPLATES: Dict[str, str] = {
+    "locomo": (
+        "Based on the conversation history stored in memory, answer this question.\n"
+        "Give a short, direct answer — just the key fact, no explanation.\n\n"
+        "Question: {question}"
+    ),
+    "sqa3d": (
+        "Based on the 3D scene objects stored in memory, answer this question.\n"
+        "Give a short answer — a single word or brief phrase.\n\n"
+        "Question: {question}"
+    ),
+    "open-eqa": (
+        "Based on the observations stored in memory, answer this question.\n"
+        "Give a concise answer in one sentence or less.\n\n"
+        "Question: {question}"
+    ),
+}
+
+_SYSTEM_PREAMBLES: Dict[str, str] = {
+    "locomo": (
+        "You are a conversational memory assistant. You have access to a memory "
+        "system that stores past conversations. Use the tools to search your "
+        "memory and answer questions about what was discussed. Give short, "
+        "factual answers — just the key information, no elaboration. "
+        "You have access to the following tools:"
+    ),
+    "sqa3d": (
+        "You are a situated 3D question answering assistant. You have access to "
+        "a memory system that stores objects and their 3D positions in a scene. "
+        "Use the tools to find objects and answer spatial questions. Give short "
+        "answers — a single word or brief phrase. "
+        "You have access to the following tools:"
+    ),
+    "open-eqa": (
+        "You are an embodied question answering assistant. You have access to a "
+        "memory system that stores observations from exploring an environment. "
+        "Use the tools to recall what was observed and answer questions. Give "
+        "concise answers. You have access to the following tools:"
+    ),
+}
 
 
 def _print_report(report: BenchmarkReport) -> None:
@@ -148,7 +202,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         args.provider, args.embed_model, args.llm_model,
         ollama_url=args.ollama_url, gemini_api_key=args.gemini_api_key,
     )
-    agent_factory = _make_agent_factory(args.provider, agent_kwargs)
+    agent_factory = _make_agent_factory(
+        args.provider, agent_kwargs,
+        system_preamble=_SYSTEM_PREAMBLES.get(args.dataset),
+    )
     scorer = _make_scorer(
         args.dataset, judge_model=args.judge_model, ollama_url=args.ollama_url,
     )
@@ -166,6 +223,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             llm_client=llm,
             agent_factory=agent_factory,
             max_samples=args.max_samples,
+            question_template=_QUESTION_TEMPLATES.get(args.dataset),
         )
 
         report = runner.run()

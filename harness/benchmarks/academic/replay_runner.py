@@ -113,6 +113,8 @@ class BenchmarkRunner:
         llm_client: Any = None,
         agent_factory: Optional[Callable[[Any], Any]] = None,
         max_samples: Optional[int] = None,
+        question_template: Optional[str] = None,
+        system_preamble: Optional[str] = None,
     ):
         """
         :param loader: Dataset loader yielding :class:`BenchmarkSample` instances.
@@ -123,6 +125,11 @@ class BenchmarkRunner:
         :param agent_factory: ``fn(mem) -> agent`` with a ``.run(query)`` method.
             Defaults to :class:`ReactAgent` via Ollama.
         :param max_samples: Maximum number of samples to evaluate.
+        :param question_template: Template for wrapping questions before passing
+            to the agent. Use ``{question}`` as placeholder. If ``None``, the raw
+            question is passed directly.
+        :param system_preamble: Custom preamble for the agent's system prompt,
+            placed before the tool definitions. If ``None``, uses the default.
         """
         self._loader = loader
         self._scorer = scorer
@@ -131,6 +138,8 @@ class BenchmarkRunner:
         self._llm = llm_client
         self._agent_factory = agent_factory
         self._max_samples = max_samples
+        self._question_template = question_template
+        self._system_preamble = system_preamble
 
     def run(self) -> BenchmarkReport:
         """Run the full benchmark evaluation.
@@ -238,8 +247,12 @@ class BenchmarkRunner:
         :param bq: The benchmark question.
         :returns: Scored question result.
         """
+        query = bq.question
+        if self._question_template:
+            query = self._question_template.format(question=query)
+
         t0 = time.monotonic()
-        result = agent.run(bq.question)
+        result = agent.run(query)
         latency = time.monotonic() - t0
 
         scores = self._scorer.score(bq.question, result.answer, bq.answer)
@@ -263,4 +276,17 @@ class BenchmarkRunner:
         if self._agent_factory is not None:
             return self._agent_factory(mem)
         from harness.agent.react_agent import ReactAgent
-        return ReactAgent(mem)
+        return ReactAgent(mem, system_prompt=self._build_system_prompt(mem))
+
+    def _build_system_prompt(self, mem: Any) -> str | None:
+        """Build a system prompt with a custom preamble, if set.
+
+        :param mem: Memory instance for tool definitions.
+        :returns: Custom system prompt, or ``None`` to use the default.
+        """
+        if self._system_preamble is None:
+            return None
+        from harness.agent.prompts import build_system_prompt
+        return build_system_prompt(
+            mem.get_tool_definitions(), preamble=self._system_preamble,
+        )
