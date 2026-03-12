@@ -158,6 +158,7 @@ class MemoryTools:
             spatial_center=spatial_center,
             spatial_radius=spatial_radius,
             episode_id=episode_id,
+            reference_time=self._get_time(),
         )
         return _format_results(results)
 
@@ -407,6 +408,7 @@ class MemoryTools:
             n_results=n_results,
             layer=layer,
             time_range=self._time_range(time_after, time_before),
+            reference_time=self._get_time(),
         )
         if not results:
             return None

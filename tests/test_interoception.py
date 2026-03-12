@@ -150,7 +150,7 @@ class TestConsolidationMixed:
 
         ep = mem.store.get_episode(ep_id)
         assert ep.status == "completed"
-        # Observations should be archived after consolidation
+        # Observations should be demoted to long_term after consolidation
         obs_list = mem.store.get_episode_observations(ep_id)
         for obs in obs_list:
-            assert obs.tier == "archived"
+            assert obs.tier == "long_term"

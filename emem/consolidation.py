@@ -75,7 +75,7 @@ class ConsolidationEngine:
         self._extract_and_merge_entities(observations)
 
         self.store.update_observation_tiers(
-            [obs.id for obs in observations], Tier.ARCHIVED.value, drop_text=True,
+            [obs.id for obs in observations], Tier.LONG_TERM.value, drop_text=False,
         )
 
         return gist_id
@@ -108,10 +108,29 @@ class ConsolidationEngine:
             self._extract_and_merge_entities(cluster_obs)
 
             self.store.update_observation_tiers(
-                [obs.id for obs in cluster_obs], Tier.ARCHIVED.value, drop_text=True,
+                [obs.id for obs in cluster_obs], Tier.LONG_TERM.value, drop_text=False,
             )
 
         return gist_ids
+
+    def archive_long_term(self, reference_time: Optional[float] = None) -> int:
+        """Archive long-term observations older than ``archive_after_seconds``.
+
+        :param reference_time: Current timestamp.  Defaults to ``time.time()``.
+        :returns: Number of observations archived.
+        :rtype: int
+        """
+        ref_time = reference_time or time.time()
+        cutoff = ref_time - self.config.archive_after_seconds
+        candidates = self.store.get_observations_for_consolidation(
+            older_than=cutoff, tier=Tier.LONG_TERM.value,
+        )
+        if not candidates:
+            return 0
+        self.store.update_observation_tiers(
+            [obs.id for obs in candidates], Tier.ARCHIVED.value, drop_text=True,
+        )
+        return len(candidates)
 
     def _spatial_cluster(self, observations: List[ObservationNode]) -> List[List[ObservationNode]]:
         if len(observations) < self.config.consolidation_min_samples:
@@ -171,8 +190,26 @@ class ConsolidationEngine:
             episode_id=episode_id,
         )
 
+    def extract_entities_from_observations(self, observations: List[ObservationNode]) -> List[str]:
+        """Extract entities from observations and mark them as processed.
+
+        Safe to call multiple times — already-extracted observations are skipped.
+
+        :param observations: Observations to extract entities from.
+        :returns: List of entity IDs created or merged.
+        :rtype: List[str]
+        """
+        entity_ids = self._extract_and_merge_entities(observations)
+        return entity_ids
+
     def _extract_and_merge_entities(self, observations: List[ObservationNode]) -> List[str]:
         if not hasattr(self._summarizer, "extract_entities"):
+            return []
+
+        # Filter to only unprocessed observations
+        unprocessed_ids = self.store.get_unextracted_obs_ids([obs.id for obs in observations])
+        observations = [obs for obs in observations if obs.id in unprocessed_ids]
+        if not observations:
             return []
 
         texts = [obs.text for obs in observations if obs.text]
@@ -239,5 +276,6 @@ class ConsolidationEngine:
                 ))
 
         self.store.add_edges(edges)
+        self.store.mark_entities_extracted([obs.id for obs in observations])
 
         return entity_ids

@@ -56,11 +56,11 @@ class TestEpisodeConsolidation:
         assert "table" in gist.text
         assert gist.source_observation_count == 2
 
-        # Source observations should be archived
+        # Source observations should be demoted to long_term (text preserved)
         obs = store.get_episode_observations(ep_id)
         for o in obs:
-            assert o.tier == Tier.ARCHIVED.value
-            assert o.text == ""
+            assert o.tier == Tier.LONG_TERM.value
+            assert o.text != ""
 
     def test_consolidate_empty_episode(self, store, engine):
         ep_id = store.start_episode("empty", 1000.0)
@@ -294,3 +294,206 @@ class TestEntityExtraction:
         entities_after = store.query_entities(name="chair")
         assert len(entities_after) == 1
         assert entities_after[0].observation_count > count_before
+
+
+class TestTwoPhaseConsolidation:
+    def test_long_term_still_searchable(self, store):
+        """After consolidate_episode, observations are long_term and still findable."""
+        config = SpatioTemporalMemoryConfig(
+            consolidation_window=100.0,
+            consolidation_min_samples=2,
+        )
+        engine = ConsolidationEngine(store=store, config=config)
+
+        ep_id = store.start_episode("test", 1000.0)
+        store.add_observation(_obs("saw a chair", x=1.0, y=1.0, ts=1001.0, episode_id=ep_id))
+        store.add_observation(_obs("saw a table", x=1.5, y=1.5, ts=1002.0, episode_id=ep_id))
+        store.end_episode(ep_id, 1003.0)
+
+        engine.consolidate_episode(ep_id)
+
+        # Observations should be long_term with text preserved
+        obs = store.get_episode_observations(ep_id)
+        for o in obs:
+            assert o.tier == Tier.LONG_TERM.value
+            assert o.text != ""
+
+        # Should still be findable via spatial_query (long_term != archived)
+        spatial = store.spatial_query(center=np.array([1.0, 1.0, 0.0]), radius=3.0)
+        assert len(spatial) > 0
+
+        # Should still be findable via temporal_query
+        temporal = store.temporal_query(time_range=(1000.0, 1010.0))
+        assert len(temporal) > 0
+
+    def test_archive_long_term(self, store):
+        """After sufficient time, archive_long_term archives observations."""
+        config = SpatioTemporalMemoryConfig(
+            consolidation_window=100.0,
+            consolidation_min_samples=2,
+            archive_after_seconds=500.0,
+        )
+        engine = ConsolidationEngine(store=store, config=config)
+
+        ep_id = store.start_episode("test", 1000.0)
+        store.add_observation(_obs("saw a chair", x=1.0, y=1.0, ts=1001.0, episode_id=ep_id))
+        store.add_observation(_obs("saw a table", x=1.5, y=1.5, ts=1002.0, episode_id=ep_id))
+        store.end_episode(ep_id, 1003.0)
+
+        engine.consolidate_episode(ep_id)
+
+        # Now archive — reference_time far in the future
+        count = engine.archive_long_term(reference_time=2000.0)
+        assert count == 2
+
+        obs = store.get_episode_observations(ep_id)
+        for o in obs:
+            assert o.tier == Tier.ARCHIVED.value
+            assert o.text == ""
+
+    def test_archive_long_term_respects_threshold(self, store):
+        """Young long_term observations are NOT archived."""
+        config = SpatioTemporalMemoryConfig(
+            consolidation_window=100.0,
+            consolidation_min_samples=2,
+            archive_after_seconds=500.0,
+        )
+        engine = ConsolidationEngine(store=store, config=config)
+
+        ep_id = store.start_episode("test", 1000.0)
+        store.add_observation(_obs("saw a chair", x=1.0, y=1.0, ts=1001.0, episode_id=ep_id))
+        store.add_observation(_obs("saw a table", x=1.5, y=1.5, ts=1002.0, episode_id=ep_id))
+        store.end_episode(ep_id, 1003.0)
+
+        engine.consolidate_episode(ep_id)
+
+        # reference_time only slightly after — should NOT archive
+        count = engine.archive_long_term(reference_time=1100.0)
+        assert count == 0
+
+        obs = store.get_episode_observations(ep_id)
+        for o in obs:
+            assert o.tier == Tier.LONG_TERM.value
+
+    def test_maintenance_facade(self, tmp_path):
+        """Test mem.maintenance() end-to-end."""
+        from emem import SpatioTemporalMemory
+
+        config = SpatioTemporalMemoryConfig(
+            db_path=str(tmp_path / "maint.db"),
+            hnsw_path=str(tmp_path / "maint_hnsw.bin"),
+            embedding_dim=32,
+            archive_after_seconds=500.0,
+        )
+        sim_time = [1000.0]
+        mem = SpatioTemporalMemory(
+            config=config,
+            get_current_time=lambda: sim_time[0],
+        )
+
+        ep_id = mem.start_episode("test")
+        mem.add("chair", x=1.0, y=1.0, timestamp=1001.0)
+        mem.add("table", x=1.5, y=1.5, timestamp=1002.0)
+        sim_time[0] = 1003.0
+        mem.end_episode()
+
+        # Too early to archive
+        sim_time[0] = 1100.0
+        assert mem.maintenance() == 0
+
+        # Now far enough
+        sim_time[0] = 2000.0
+        assert mem.maintenance() == 2
+        mem.close()
+
+
+class TestEarlyEntityExtraction:
+    def test_entities_extracted_at_flush(self, tmp_path):
+        """Entities are extracted at flush time, before end_episode."""
+        from emem import SpatioTemporalMemory
+
+        config = SpatioTemporalMemoryConfig(
+            db_path=str(tmp_path / "early_ent.db"),
+            hnsw_path=str(tmp_path / "early_ent_hnsw.bin"),
+            embedding_dim=32,
+            flush_batch_size=2,
+        )
+        mem = SpatioTemporalMemory(
+            config=config,
+            llm_client=FakeEntityExtractor(),
+        )
+
+        ep_id = mem.start_episode("test")
+        mem.add("saw a chair", x=5.0, y=5.0, timestamp=1001.0)
+        mem.add("saw a table", x=5.5, y=5.5, timestamp=1002.0)
+        # flush_batch_size=2 triggers auto-flush after 2nd add
+
+        # Entities should exist BEFORE end_episode
+        entities = mem.store.query_entities()
+        assert len(entities) >= 2
+        names = {e.name for e in entities}
+        assert "chair" in names
+        assert "table" in names
+
+        mem.end_episode()
+        mem.close()
+
+    def test_no_double_extraction(self, tmp_path):
+        """After flush-time extraction, consolidate_episode doesn't double entities."""
+        from emem import SpatioTemporalMemory
+
+        config = SpatioTemporalMemoryConfig(
+            db_path=str(tmp_path / "no_double.db"),
+            hnsw_path=str(tmp_path / "no_double_hnsw.bin"),
+            embedding_dim=32,
+            flush_batch_size=2,
+        )
+        mem = SpatioTemporalMemory(
+            config=config,
+            llm_client=FakeEntityExtractor(),
+        )
+
+        ep_id = mem.start_episode("test")
+        mem.add("saw a chair", x=5.0, y=5.0, timestamp=1001.0)
+        mem.add("saw a table", x=5.5, y=5.5, timestamp=1002.0)
+
+        # Entities exist from flush
+        entities_before = mem.store.query_entities()
+        chair_before = [e for e in entities_before if e.name == "chair"]
+        assert len(chair_before) == 1
+        count_before = chair_before[0].observation_count
+
+        # end_episode triggers consolidate_episode which calls _extract_and_merge_entities
+        # The dedup guard should prevent re-extraction
+        mem.end_episode()
+
+        entities_after = mem.store.query_entities(name="chair")
+        assert len(entities_after) == 1
+        # observation_count should NOT have doubled
+        assert entities_after[0].observation_count == count_before
+
+        mem.close()
+
+    def test_graceful_no_extractor(self, tmp_path):
+        """Without extract_entities on LLM client, flush works normally."""
+        from emem import SpatioTemporalMemory
+
+        config = SpatioTemporalMemoryConfig(
+            db_path=str(tmp_path / "no_ext.db"),
+            hnsw_path=str(tmp_path / "no_ext_hnsw.bin"),
+            embedding_dim=32,
+            flush_batch_size=2,
+        )
+        # Default ConcatenationSummarizer has no extract_entities
+        mem = SpatioTemporalMemory(config=config)
+
+        ep_id = mem.start_episode("test")
+        mem.add("saw a chair", x=5.0, y=5.0, timestamp=1001.0)
+        mem.add("saw a table", x=5.5, y=5.5, timestamp=1002.0)
+
+        # Should work fine, no entities
+        entities = mem.store.query_entities()
+        assert len(entities) == 0
+
+        mem.end_episode()
+        mem.close()

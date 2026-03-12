@@ -20,9 +20,16 @@ class SpatioTemporalMemoryConfig:
     consolidation_spatial_eps: float = 3.0  # DBSCAN eps in meters
     consolidation_min_samples: int = 3
 
+    # Archival
+    archive_after_seconds: float = 3600.0  # seconds in long_term before archival
+
     # Entity matching
     entity_similarity_threshold: float = 0.85
     entity_spatial_radius: float = 5.0
+
+    # Recency weighting
+    recency_weight: float = 0.0       # alpha multiplier (0.0 = disabled)
+    recency_halflife: float = 3600.0  # time constant in seconds
 
     # HNSW parameters
     hnsw_ef_construction: int = 200

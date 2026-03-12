@@ -514,6 +514,90 @@ class TestEntityEdges:
         assert cooccurring2[0].id == e1.id
 
 
+class TestRecencyWeighting:
+    def test_recency_disabled_by_default(self, store):
+        """With default config (recency_weight=0), ordering matches pure HNSW distance."""
+        store.add_observation(_make_obs("alpha", ts=1000.0))
+        store.add_observation(_make_obs("beta", ts=2000.0))
+
+        results_no_ref = store.semantic_search("alpha", n_results=10)
+        results_with_ref = store.semantic_search("alpha", n_results=10, reference_time=3000.0)
+        # Same ordering since recency_weight=0
+        assert [r.id for r in results_no_ref] == [r.id for r in results_with_ref]
+
+    def test_recency_favors_recent(self, tmp_path):
+        """With recency_weight > 0, recent observations rank higher at equal distance."""
+        config = SpatioTemporalMemoryConfig(
+            db_path=str(tmp_path / "recency.db"),
+            hnsw_path=str(tmp_path / "recency_hnsw.bin"),
+            embedding_dim=32,
+            hnsw_max_elements=1000,
+            recency_weight=1.0,
+            recency_halflife=1000.0,
+        )
+        s = MemoryStore(config=config, embedding_provider=FakeEmbeddingProvider(32))
+
+        # Two observations with same text (same embedding) but different timestamps
+        s.add_observation(_make_obs("identical test phrase", ts=100.0))
+        s.add_observation(_make_obs("identical test phrase", ts=9000.0))
+
+        results = s.semantic_search("identical test phrase", n_results=2, reference_time=10000.0)
+        assert len(results) == 2
+        # The recent one (ts=9000) should rank first due to lower recency penalty
+        assert results[0].timestamp == 9000.0
+        s.close()
+
+    def test_recency_across_node_types(self, tmp_path):
+        """Recency weighting works for gists (time_end) and entities (last_seen)."""
+        config = SpatioTemporalMemoryConfig(
+            db_path=str(tmp_path / "recency_types.db"),
+            hnsw_path=str(tmp_path / "recency_types_hnsw.bin"),
+            embedding_dim=32,
+            hnsw_max_elements=1000,
+            recency_weight=1.0,
+            recency_halflife=1000.0,
+        )
+        s = MemoryStore(config=config, embedding_provider=FakeEmbeddingProvider(32))
+
+        s.add_entity(_make_entity("test item", ts=5000.0))
+        gist = GistNode(
+            text="test item summary",
+            center_position=np.array([0, 0, 0]),
+            radius=1.0,
+            time_start=100.0,
+            time_end=200.0,
+            source_observation_count=1,
+            source_observation_ids=["x"],
+        )
+        s.add_gist(gist)
+
+        results = s.semantic_search("test item", n_results=10, reference_time=6000.0)
+        assert len(results) >= 1
+        # Entity (last_seen=5000) is more recent than gist (time_end=200)
+        # so entity should rank first
+        assert isinstance(results[0], EntityNode)
+        s.close()
+
+    def test_recency_no_reference_time(self, tmp_path):
+        """Without reference_time, original ordering even if recency_weight > 0."""
+        config = SpatioTemporalMemoryConfig(
+            db_path=str(tmp_path / "recency_noref.db"),
+            hnsw_path=str(tmp_path / "recency_noref_hnsw.bin"),
+            embedding_dim=32,
+            hnsw_max_elements=1000,
+            recency_weight=1.0,
+            recency_halflife=1000.0,
+        )
+        s = MemoryStore(config=config, embedding_provider=FakeEmbeddingProvider(32))
+        s.add_observation(_make_obs("foo", ts=100.0))
+        s.add_observation(_make_obs("foo", ts=9000.0))
+
+        # No reference_time → should use plain HNSW ordering (no crash)
+        results = s.semantic_search("foo", n_results=10)
+        assert len(results) >= 1
+        s.close()
+
+
 class TestEntityInSemanticSearch:
     def test_entity_found_by_semantic_search(self, store):
         entity = _make_entity("red chair", x=5.0, y=5.0)

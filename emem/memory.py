@@ -49,15 +49,22 @@ class SpatioTemporalMemory:
         self._get_time = get_current_time or time.time
 
         self._store = MemoryStore(config=config, embedding_provider=embedding_provider)
-        self._wm = WorkingMemory(store=self._store, config=config)
         self._consolidation = ConsolidationEngine(
             store=self._store, config=config, llm_client=llm_client,
+        )
+        self._wm = WorkingMemory(
+            store=self._store, config=config,
+            on_flush=self._on_observations_flushed,
         )
         self._tools = MemoryTools(
             store=self._store,
             get_current_time=self._get_time,
             get_current_position=lambda: self._wm.current_position,
         )
+
+    def _on_observations_flushed(self, observations):
+        if hasattr(self._consolidation._summarizer, "extract_entities"):
+            self._consolidation.extract_entities_from_observations(observations)
 
     # ── Ingestion ─────────────────────────────────────────────────
 
@@ -287,6 +294,14 @@ class SpatioTemporalMemory:
         """
         self._ensure_flushed()
         return self._consolidation.consolidate_time_window(reference_time=self._get_time())
+
+    def maintenance(self) -> int:
+        """Archive long-term observations that have aged past the threshold.
+
+        :returns: Number of observations archived.
+        :rtype: int
+        """
+        return self._consolidation.archive_long_term(reference_time=self._get_time())
 
     # ── Tool dispatch (for LLM integration) ───────────────────────
 

@@ -1,7 +1,7 @@
 import threading
 import time
 from collections import deque
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Callable, Deque, Dict, List, Optional
 
 import numpy as np
 
@@ -22,9 +22,11 @@ class WorkingMemory:
         self,
         store: MemoryStore,
         config: Optional[SpatioTemporalMemoryConfig] = None,
+        on_flush: Optional[Any] = None,
     ) -> None:
         self.store = store
         self.config = config or SpatioTemporalMemoryConfig()
+        self._on_flush = on_flush
 
         self._buffer: Deque[ObservationNode] = deque()
         self._recent: Deque[ObservationNode] = deque(maxlen=self.config.working_memory_size)
@@ -77,6 +79,8 @@ class WorkingMemory:
         for obs in to_flush:
             obs.tier = "short_term"
         self.store.add_observations_batch(to_flush)
+        if self._on_flush:
+            self._on_flush(to_flush)
         return len(to_flush)
 
     def get_recent(self, n: Optional[int] = None) -> List[ObservationNode]:

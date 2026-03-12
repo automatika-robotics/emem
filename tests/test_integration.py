@@ -187,10 +187,10 @@ def test_full_pipeline(system):
     gist1 = store.get_gist(gist1_id)
     assert gist1.source_observation_count == 15
 
-    # Episode 1 observations should be archived
+    # Episode 1 observations should be demoted to long_term
     ep1_obs = store.get_episode_observations(ep1_id)
     for o in ep1_obs:
-        assert o.tier == Tier.ARCHIVED.value
+        assert o.tier == Tier.LONG_TERM.value
 
     # Time-window consolidation for detection-layer observations
     gist_ids = consolidation.consolidate_time_window(reference_time=700.0)

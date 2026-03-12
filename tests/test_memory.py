@@ -82,10 +82,10 @@ class TestEpisodeLifecycle:
         mem.add("table", x=1.5, y=1.5)
         mem.end_episode()
 
-        # Observations should be archived (consolidated)
+        # Observations should be demoted to long_term (consolidated)
         obs_list = mem.store.get_episode_observations(ep_id)
         for obs in obs_list:
-            assert obs.tier == "archived"
+            assert obs.tier == "long_term"
 
     def test_no_consolidation_when_disabled(self, mem):
         ep_id = mem.start_episode("patrol")

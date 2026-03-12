@@ -82,7 +82,8 @@ class MemoryStore:
                 episode_id TEXT,
                 metadata TEXT NOT NULL DEFAULT '{}',
                 tier TEXT NOT NULL DEFAULT 'short_term',
-                has_embedding INTEGER NOT NULL DEFAULT 0
+                has_embedding INTEGER NOT NULL DEFAULT 0,
+                entities_extracted INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE INDEX IF NOT EXISTS idx_obs_timestamp ON observations(timestamp);
@@ -163,6 +164,13 @@ class MemoryStore:
             );
         """)
         self._db.commit()
+
+        # Migration: add entities_extracted column if missing
+        try:
+            self._db.execute("ALTER TABLE observations ADD COLUMN entities_extracted INTEGER NOT NULL DEFAULT 0")
+            self._db.commit()
+        except sqlite3.OperationalError:
+            pass  # Column already exists
 
     def _load_hnsw_mappings(self) -> None:
         rows = self._db.execute("SELECT int_id, str_id FROM hnsw_mappings").fetchall()
@@ -391,6 +399,28 @@ class MemoryStore:
 
     def update_observation_tier(self, obs_id: str, tier: str, drop_text: bool = False) -> None:
         self.update_observation_tiers([obs_id], tier, drop_text)
+
+    def mark_entities_extracted(self, obs_ids: List[str]) -> None:
+        """Mark observations as having had entities extracted."""
+        if not obs_ids:
+            return
+        placeholders = ",".join("?" * len(obs_ids))
+        self._db.execute(
+            f"UPDATE observations SET entities_extracted = 1 WHERE id IN ({placeholders})",
+            obs_ids,
+        )
+        self._db.commit()
+
+    def get_unextracted_obs_ids(self, obs_ids: List[str]) -> set:
+        """Return the subset of obs_ids that have not had entities extracted."""
+        if not obs_ids:
+            return set()
+        placeholders = ",".join("?" * len(obs_ids))
+        rows = self._db.execute(
+            f"SELECT id FROM observations WHERE id IN ({placeholders}) AND entities_extracted = 0",
+            obs_ids,
+        ).fetchall()
+        return {r["id"] for r in rows}
 
     def add_edge(self, edge: Edge) -> str:
         with self._lock:
@@ -700,6 +730,7 @@ class MemoryStore:
         spatial_center: Optional[np.ndarray] = None,
         spatial_radius: Optional[float] = None,
         episode_id: Optional[str] = None,
+        reference_time: Optional[float] = None,
     ) -> List[Union[ObservationNode, GistNode, EntityNode]]:
         """Search by meaning across observations, consolidated gists, and entities.
 
@@ -710,12 +741,14 @@ class MemoryStore:
         :param spatial_center: Centre point for spatial filter.
         :param spatial_radius: Radius for spatial filter.
         :param episode_id: Filter by episode.
+        :param reference_time: Current time for recency weighting.
         :returns: Ranked list of observations, gists, and/or entities.
         :rtype: List[Union[ObservationNode, GistNode, EntityNode]]
         """
         query_emb = self.embedding_provider.embed([query])[0]
         return self.semantic_search_by_vector(
-            query_emb, n_results, layer, time_range, spatial_center, spatial_radius, episode_id
+            query_emb, n_results, layer, time_range, spatial_center, spatial_radius,
+            episode_id, reference_time,
         )
 
     def semantic_search_by_vector(
@@ -727,6 +760,7 @@ class MemoryStore:
         spatial_center: Optional[np.ndarray] = None,
         spatial_radius: Optional[float] = None,
         episode_id: Optional[str] = None,
+        reference_time: Optional[float] = None,
     ) -> List[Union[ObservationNode, GistNode, EntityNode]]:
         """Search by embedding vector across observations, consolidated gists, and entities.
 
@@ -737,6 +771,7 @@ class MemoryStore:
         :param spatial_center: Centre point for spatial filter.
         :param spatial_radius: Radius for spatial filter.
         :param episode_id: Filter by episode.
+        :param reference_time: Current time for recency weighting.
         :returns: Ranked list of observations, gists, and/or entities.
         :rtype: List[Union[ObservationNode, GistNode, EntityNode]]
         """
@@ -852,9 +887,34 @@ class MemoryStore:
             rows = self._db.execute(ent_sql, ent_params).fetchall()
             results.extend(self._row_to_entity(r) for r in rows)
 
-        # Preserve HNSW distance ordering
-        id_order = {sid: i for i, sid in enumerate(candidate_ids)}
-        results.sort(key=lambda item: id_order.get(item.id, 9999))
+        # Sort by recency-weighted distance if enabled, else HNSW order
+        if reference_time is not None and self.config.recency_weight > 0:
+            alpha = self.config.recency_weight
+            halflife = self.config.recency_halflife
+            hnsw_dist: Dict[str, float] = {}
+            for lbl, dist in zip(labels[0], distances[0]):
+                sid = self._hnsw_id_map.get(int(lbl))
+                if sid:
+                    hnsw_dist[sid] = float(dist)
+
+            def _ts(item: Any) -> float:
+                if isinstance(item, ObservationNode):
+                    return item.timestamp
+                elif isinstance(item, GistNode):
+                    return item.time_end
+                elif isinstance(item, EntityNode):
+                    return item.last_seen
+                return 0.0
+
+            def _score(item: Any) -> float:
+                base = hnsw_dist.get(item.id, 1.0)
+                age = max(0.0, reference_time - _ts(item))
+                return base + alpha * age / halflife
+
+            results.sort(key=_score)
+        else:
+            id_order = {sid: i for i, sid in enumerate(candidate_ids)}
+            results.sort(key=lambda item: id_order.get(item.id, 9999))
         return results[:n_results]
 
     def spatial_query(
