@@ -81,7 +81,7 @@ def _parse_entities(raw: str) -> list[dict[str, Any]]:
         {
             "name": str(e["name"]),
             "entity_type": e.get("entity_type"),
-            "confidence": float(e.get("confidence", 1.0)),
+            "confidence": float(e.get("confidence") or 1.0),
         }
         for e in entities
         if isinstance(e, dict) and "name" in e
