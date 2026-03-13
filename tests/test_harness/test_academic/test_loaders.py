@@ -76,6 +76,15 @@ class TestLoCoMoLoader:
             samples = list(loader.load())
             assert all(f.layer_name == "conversation" for f in samples[0].trajectory)
 
+    def test_session_date_in_text(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_data(tmpdir, n_conversations=1, n_turns=2)
+            loader = LoCoMoLoader(tmpdir)
+            samples = list(loader.load())
+            text = samples[0].trajectory[0].text
+            assert "[Session 1 — 1:00 pm on 8 May, 2023]" in text
+            assert "[Alice]:" in text
+
     def test_name(self):
         loader = LoCoMoLoader("/nonexistent")
         assert loader.name == "locomo"

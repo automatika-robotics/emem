@@ -130,7 +130,11 @@ class LoCoMoLoader:
             ts_key = f"session_{num}_date_time"
 
             turns = conversation.get(session_key, [])
-            session_ts = _parse_locomo_timestamp(conversation.get(ts_key, ""))
+            raw_ts = conversation.get(ts_key, "")
+            session_ts = _parse_locomo_timestamp(raw_ts)
+
+            # Build a readable date prefix for this session
+            date_prefix = f"[Session {num} — {raw_ts}] " if raw_ts else ""
 
             for turn_idx, turn in enumerate(turns):
                 speaker = turn.get("speaker", "unknown")
@@ -142,7 +146,7 @@ class LoCoMoLoader:
                     frame_id=turn.get("dia_id", f"turn_{global_turn}"),
                     position=(0.0, 0.0, 0.0),
                     timestamp=ts,
-                    text=f"[{speaker}]: {text}",
+                    text=f"{date_prefix}[{speaker}]: {text}",
                     layer_name="conversation",
                 ))
                 global_turn += 1
