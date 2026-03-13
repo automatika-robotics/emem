@@ -170,21 +170,27 @@ class ReactAgent(_BaseReactAgent):
     def __init__(
         self,
         mem: Any,
-        model: str = "qwen3.5:4b",
+        model: str = "qwen3.5:latest",
         base_url: str = "http://localhost:11434",
         max_steps: int = 5,
         system_prompt: str | None = None,
+        think: bool = False,
     ):
         super().__init__(mem, max_steps, system_prompt)
         self._model = model
         self._url = f"{base_url.rstrip('/')}/api/chat"
+        self._think = think
 
     def _chat(self, messages: list[dict[str, str]]) -> str:
         from harness.providers.http import post_json
+        from harness.providers.ollama_vlm import _is_thinking_model
 
-        data = post_json(self._url, {
+        body: dict = {
             "model": self._model, "messages": messages, "stream": False,
-        }, timeout=300)
+        }
+        if _is_thinking_model(self._model):
+            body["think"] = self._think
+        data = post_json(self._url, body, timeout=300)
         return strip_think_tags(data["message"]["content"])
 
 

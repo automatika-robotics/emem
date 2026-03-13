@@ -43,7 +43,7 @@ def _make_scorer(dataset: str, **kwargs: Any) -> Any:
         from harness.benchmarks.academic.scorers.llm_match import LLMMatchScorer
         from harness.providers.ollama_llm import OllamaLLMClient
         llm = OllamaLLMClient(
-            model=kwargs.get("judge_model", "qwen3.5:4b"),
+            model=kwargs.get("judge_model", "qwen3.5:latest"),
             base_url=kwargs.get("ollama_url", "http://localhost:11434"),
         )
         return LLMMatchScorer(llm_chat=llm._chat)
@@ -105,7 +105,7 @@ def _make_agent_factory(
             from harness.agent.react_agent import GeminiReactAgent
             return GeminiReactAgent(mem, system_prompt=system_prompt, **agent_kwargs)
         from harness.agent.react_agent import ReactAgent
-        return ReactAgent(mem, system_prompt=system_prompt, **agent_kwargs)
+        return ReactAgent(mem, system_prompt=system_prompt, think=True, **agent_kwargs)
     return factory
 
 
@@ -179,8 +179,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--provider", default="ollama", choices=["ollama", "gemini"])
     parser.add_argument("--embed-model", default="nomic-embed-text-v2-moe:latest")
-    parser.add_argument("--llm-model", default="qwen3.5:4b")
-    parser.add_argument("--judge-model", default="qwen3.5:4b")
+    parser.add_argument("--llm-model", default="qwen3.5:latest")
+    parser.add_argument("--judge-model", default="qwen3.5:latest")
     parser.add_argument("--ollama-url", default="http://localhost:11434")
     parser.add_argument("--gemini-api-key", default=None)
     parser.add_argument("--json", action="store_true", help="Output JSON report")

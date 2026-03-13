@@ -14,7 +14,7 @@ class OllamaVLM:
 
     def __init__(
         self,
-        model: str = "qwen3.5:4b",
+        model: str = "qwen3.5:latest",
         base_url: str = "http://localhost:11434",
     ):
         self._model = model
@@ -33,7 +33,7 @@ class OllamaVLM:
         :param image: ``(H, W, 3)`` uint8 numpy array (RGB).
         :param prompt: Text prompt for the VLM.
         :param max_tokens: Maximum tokens to generate.
-        :param think: Force thinking on/off.  ``None`` = on for thinking models.
+        :param think: Force thinking on/off.  ``None`` = off (pass ``True`` to enable).
         :returns: Model's text response.
         """
         b64 = encode_image_b64(image)
@@ -44,8 +44,8 @@ class OllamaVLM:
         }
         if max_tokens is not None:
             body["options"] = {"num_predict": max_tokens}
-        # Use Ollama's top-level "think" field for thinking models
-        if think is not None and self._thinks:
-            body["think"] = think
+        # Thinking off by default; callers pass think=True to enable
+        if self._thinks:
+            body["think"] = think if think is not None else False
         data = post_json(self._url, body, timeout=300)
         return strip_think_tags(data["message"]["content"])

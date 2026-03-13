@@ -15,7 +15,7 @@ class OllamaLLMClient:
 
     def __init__(
         self,
-        model: str = "qwen3.5:4b",
+        model: str = "qwen3.5:latest",
         base_url: str = "http://localhost:11434",
     ):
         self._model = model
@@ -63,8 +63,8 @@ class OllamaLLMClient:
         }
         if max_tokens is not None:
             body["options"] = {"num_predict": max_tokens}
-        if think is not None and self._thinks:
-            body["think"] = think
+        if self._thinks:
+            body["think"] = think if think is not None else False
         data = post_json(self._url, body, timeout=300)
         return strip_think_tags(data["message"]["content"])
 

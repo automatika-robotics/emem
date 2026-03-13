@@ -43,8 +43,8 @@ class HarnessRunner:
     def __init__(
         self,
         env_name: str = "MiniGrid-MultiRoom-N6-v0",
-        vlm_model: str = "qwen3.5:4b",
-        llm_model: str = "qwen3.5:4b",
+        vlm_model: str = "qwen3.5:latest",
+        llm_model: str = "qwen3.5:latest",
         embed_model: str = "nomic-embed-text-v2-moe:latest",
         provider: str = "ollama",
         ollama_url: str = "http://localhost:11434",

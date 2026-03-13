@@ -366,7 +366,7 @@ pip install minigrid gymnasium
 
 # Pull Ollama models
 ollama pull nomic-embed-text-v2-moe:latest
-ollama pull qwen3.5:4b
+ollama pull qwen3.5:latest
 ```
 
 ### Running
@@ -394,7 +394,7 @@ The harness logs progress to stderr as it runs: each VLM inference, episode boun
 
 Each run:
 
-1. **Ingestion** -- navigates MiniGrid with random actions, periodically sends rendered frames to a VLM (`qwen3.5:4b`) with two prompts (scene description + place type), and feeds results into eMEM as separate observation layers. Synthetic body state (battery, CPU temp, joint health) is generated every step.
+1. **Ingestion** -- navigates MiniGrid with random actions, periodically sends rendered frames to a VLM (`qwen3.5:latest`) with two prompts (scene description + place type), and feeds results into eMEM as separate observation layers. Synthetic body state (battery, CPU temp, joint health) is generated every step.
 
 2. **Evaluation** -- a ReAct agent answers 8 benchmark queries ("What places have I visited?", "What's my battery level?", "Where is the door?", etc.) and the harness measures tool selection accuracy, answer relevance, and latency.
 
@@ -510,8 +510,8 @@ python -m harness.run_benchmark \
 --max-samples     Limit number of samples evaluated
 --provider        ollama | gemini (default: ollama)
 --embed-model     Embedding model (default: nomic-embed-text-v2-moe:latest)
---llm-model       LLM for agent + consolidation (default: qwen3.5:4b)
---judge-model     LLM for scoring (OpenEQA only, default: qwen3.5:4b)
+--llm-model       LLM for agent + consolidation (default: qwen3.5:latest)
+--judge-model     LLM for scoring (OpenEQA only, default: qwen3.5:latest)
 --json            Output JSON report instead of formatted tables
 -v                Verbose logging
 ```
