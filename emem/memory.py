@@ -52,6 +52,9 @@ class SpatioTemporalMemory:
         self._consolidation = ConsolidationEngine(
             store=self._store, config=config, llm_client=llm_client,
         )
+        self._entity_buffer: List[ObservationNode] = []
+        self._entity_flush_count = 0
+        self._entity_last_extract_time = time.time()
         self._wm = WorkingMemory(
             store=self._store, config=config,
             on_flush=self._on_observations_flushed,
@@ -62,9 +65,25 @@ class SpatioTemporalMemory:
             get_current_position=lambda: self._wm.current_position,
         )
 
-    def _on_observations_flushed(self, observations):
-        if hasattr(self._consolidation._summarizer, "extract_entities"):
-            self._consolidation.extract_entities_from_observations(observations)
+    def _on_observations_flushed(self, observations: List[ObservationNode]) -> None:
+        if not hasattr(self._consolidation._summarizer, "extract_entities"):
+            return
+        self._entity_buffer.extend(observations)
+        self._entity_flush_count += 1
+        now = time.time()
+        elapsed = now - self._entity_last_extract_time
+        if (self._entity_flush_count >= self._config.entity_extract_flush_interval
+                or elapsed >= self._config.entity_extract_time_interval):
+            self._drain_entity_buffer()
+
+    def _drain_entity_buffer(self) -> None:
+        if not self._entity_buffer:
+            return
+        batch = self._entity_buffer[:]
+        self._entity_buffer.clear()
+        self._entity_flush_count = 0
+        self._entity_last_extract_time = time.time()
+        self._consolidation.extract_entities_from_observations(batch)
 
     # ── Ingestion ─────────────────────────────────────────────────
 
@@ -189,6 +208,7 @@ class SpatioTemporalMemory:
             return None
 
         self._wm.flush()
+        self._drain_entity_buffer()
         ep_id = self._wm.active_episode_id
         self._wm.active_episode_id = None
 
@@ -348,10 +368,12 @@ class SpatioTemporalMemory:
 
     def save(self) -> None:
         self._wm.flush()
+        self._drain_entity_buffer()
         self._store.save()
 
     def close(self) -> None:
         self._wm.flush()
+        self._drain_entity_buffer()
         self._store.close()
 
     def __enter__(self):

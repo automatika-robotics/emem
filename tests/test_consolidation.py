@@ -417,6 +417,7 @@ class TestEarlyEntityExtraction:
             hnsw_path=str(tmp_path / "early_ent_hnsw.bin"),
             embedding_dim=32,
             flush_batch_size=2,
+            entity_extract_flush_interval=1,
         )
         mem = SpatioTemporalMemory(
             config=config,
@@ -447,6 +448,7 @@ class TestEarlyEntityExtraction:
             hnsw_path=str(tmp_path / "no_double_hnsw.bin"),
             embedding_dim=32,
             flush_batch_size=2,
+            entity_extract_flush_interval=1,
         )
         mem = SpatioTemporalMemory(
             config=config,

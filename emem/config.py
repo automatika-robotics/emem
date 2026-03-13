@@ -12,8 +12,8 @@ class SpatioTemporalMemoryConfig:
 
     # Working memory
     working_memory_size: int = 50
-    flush_interval: float = 2.0       # seconds
-    flush_batch_size: int = 5         # observations before auto-flush
+    flush_interval: float = 2.0  # seconds
+    flush_batch_size: int = 5  # observations before auto-flush
 
     # Consolidation
     consolidation_window: float = 1800.0  # 30 minutes in seconds
@@ -23,12 +23,16 @@ class SpatioTemporalMemoryConfig:
     # Archival
     archive_after_seconds: float = 3600.0  # seconds in long_term before archival
 
-    # Entity matching
+    # Entity extraction
+    entity_extract_flush_interval: int = 10  # extract every N flushes
+    entity_extract_time_interval: float = (
+        60.0  # or every N seconds, whichever comes first
+    )
     entity_similarity_threshold: float = 0.85
     entity_spatial_radius: float = 5.0
 
     # Recency weighting
-    recency_weight: float = 0.0       # alpha multiplier (0.0 = disabled)
+    recency_weight: float = 0.0  # alpha multiplier (0.0 = disabled)
     recency_halflife: float = 3600.0  # time constant in seconds
 
     # HNSW parameters
