@@ -220,6 +220,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--json", action="store_true", help="Output JSON report")
     parser.add_argument("--think", action="store_true", help="Enable thinking for Ollama models")
     parser.add_argument("--details", action="store_true", help="Print full Q/A/GT for each question")
+    parser.add_argument("--recency-weight", type=float, default=0.0,
+                        help="Recency weighting alpha (0=disabled, try 0.3)")
+    parser.add_argument("--recency-halflife", type=float, default=2592000.0,
+                        help="Recency halflife in seconds (default 30 days)")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -247,6 +251,11 @@ def main(argv: Optional[List[str]] = None) -> None:
         args.dataset, judge_model=args.judge_model, ollama_url=args.ollama_url,
     )
 
+    mem_config_overrides: Dict[str, Any] = {}
+    if args.recency_weight > 0:
+        mem_config_overrides["recency_weight"] = args.recency_weight
+        mem_config_overrides["recency_halflife"] = args.recency_halflife
+
     reports: List[BenchmarkReport] = []
     for abl_name in ablation_names:
         ablation = ABLATIONS[abl_name]
@@ -261,6 +270,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             agent_factory=agent_factory,
             max_samples=args.max_samples,
             question_template=_QUESTION_TEMPLATES.get(args.dataset),
+            mem_config_overrides=mem_config_overrides,
         )
 
         report = runner.run()

@@ -173,6 +173,7 @@ class BenchmarkRunner:
         max_samples: Optional[int] = None,
         question_template: Optional[str] = None,
         system_preamble: Optional[str] = None,
+        mem_config_overrides: Optional[Dict[str, Any]] = None,
     ):
         """
         :param loader: Dataset loader yielding :class:`BenchmarkSample` instances.
@@ -188,6 +189,8 @@ class BenchmarkRunner:
             question is passed directly.
         :param system_preamble: Custom preamble for the agent's system prompt,
             placed before the tool definitions. If ``None``, uses the default.
+        :param mem_config_overrides: Dict of field overrides applied to the
+            default :class:`SpatioTemporalMemoryConfig` for each sample.
         """
         self._loader = loader
         self._scorer = scorer
@@ -198,6 +201,7 @@ class BenchmarkRunner:
         self._max_samples = max_samples
         self._question_template = question_template
         self._system_preamble = system_preamble
+        self._mem_config_overrides = mem_config_overrides or {}
 
     def run(self) -> BenchmarkReport:
         """Run the full benchmark evaluation.
@@ -242,9 +246,19 @@ class BenchmarkRunner:
         :param mem_cls: SpatioTemporalMemory class (passed to allow testing).
         :returns: Per-sample result with question scores.
         """
+        from emem.config import SpatioTemporalMemoryConfig
+        from pathlib import Path
+
         db_path = tempfile.mktemp(suffix=".db")
+        config_kwargs: Dict[str, Any] = {
+            "db_path": db_path,
+            "hnsw_path": str(Path(db_path).with_suffix(".hnsw.bin")),
+        }
+        config_kwargs.update(self._mem_config_overrides)
+        config = SpatioTemporalMemoryConfig(**config_kwargs)
         mem = mem_cls(
             db_path=db_path,
+            config=config,
             embedding_provider=self._embedder,
             llm_client=self._llm,
         )
