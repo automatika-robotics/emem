@@ -85,6 +85,7 @@ def _make_agent_factory(
     provider: str,
     agent_kwargs: Dict[str, Any],
     system_preamble: Optional[str] = None,
+    think: bool = False,
 ) -> Any:
     """Create an agent factory function for the given provider.
 
@@ -92,6 +93,7 @@ def _make_agent_factory(
     :param agent_kwargs: Keyword arguments passed to the agent constructor.
     :param system_preamble: Custom system prompt preamble. If ``None``, the
         agent uses the default preamble.
+    :param think: Enable thinking for Ollama models.
     :returns: Callable that takes a memory instance and returns an agent.
     """
     def factory(mem: Any) -> Any:
@@ -105,14 +107,16 @@ def _make_agent_factory(
             from harness.agent.react_agent import GeminiReactAgent
             return GeminiReactAgent(mem, system_prompt=system_prompt, **agent_kwargs)
         from harness.agent.react_agent import ReactAgent
-        return ReactAgent(mem, system_prompt=system_prompt, think=True, **agent_kwargs)
+        return ReactAgent(mem, system_prompt=system_prompt, think=think, **agent_kwargs)
     return factory
 
 
 _QUESTION_TEMPLATES: Dict[str, str] = {
     "locomo": (
         "Based on the conversation history stored in memory, answer this question.\n"
-        "Give a short, direct answer — just the key fact, no explanation.\n\n"
+        "Your answer MUST be 5 words or fewer. Give only the key fact.\n"
+        "Convert any relative dates to absolute dates.\n"
+        "Do not explain or elaborate.\n\n"
         "Question: {question}"
     ),
     "sqa3d": (
@@ -131,8 +135,10 @@ _SYSTEM_PREAMBLES: Dict[str, str] = {
     "locomo": (
         "You are a conversational memory assistant. You have access to a memory "
         "system that stores past conversations. Use the tools to search your "
-        "memory and answer questions about what was discussed. Give short, "
-        "factual answers — just the key information, no elaboration. "
+        "memory and answer questions about what was discussed. "
+        "Your answers MUST be 5 words or fewer — just the key fact, no explanation. "
+        "Always convert relative dates to absolute dates. "
+        "Pay attention to timestamps on memories. "
         "You have access to the following tools:"
     ),
     "sqa3d": (
@@ -164,6 +170,34 @@ def _print_report(report: BenchmarkReport) -> None:
     print(f"{'=' * 60}")
     for k, v in s["metrics"].items():
         print(f"  {k:20s}: {v:6.2f}")
+
+    if "per_category" in s:
+        print(f"\n  {'Category':<12} {'N':>5} {'Score':>7} {'Zero':>5} {'Perfect':>8}")
+        print(f"  {'-'*12} {'-'*5} {'-'*7} {'-'*5} {'-'*8}")
+        for cat, info in s["per_category"].items():
+            print(
+                f"  {cat:<12} {info['n']:>5} {info['mean_score']:>7.1f}"
+                f" {info['n_zero']:>5} {info['n_perfect']:>8}"
+            )
+    print()
+
+
+def _print_details(report: BenchmarkReport) -> None:
+    """Print detailed per-question results for failure analysis.
+
+    :param report: The benchmark report to display.
+    """
+    for sr in report.sample_results:
+        print(f"\n--- Sample: {sr.sample_id} ({len(sr.question_results)} questions) ---")
+        for qr in sr.question_results:
+            score = qr.scores.get("score", 0)
+            tools = ",".join(qr.tools_used) if qr.tools_used else "none"
+            marker = "OK" if score >= 50 else "LOW" if score > 0 else "FAIL"
+            gt_display = qr.ground_truth if qr.ground_truth else "(empty)"
+            print(f"\n  [{marker}] q={qr.question_id} cat={qr.category} score={score:.0f} tools=[{tools}]")
+            print(f"    Q: {qr.question}")
+            print(f"    GT: {gt_display}")
+            print(f"    Pred: {qr.prediction[:200]}")
     print()
 
 
@@ -184,6 +218,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--ollama-url", default="http://localhost:11434")
     parser.add_argument("--gemini-api-key", default=None)
     parser.add_argument("--json", action="store_true", help="Output JSON report")
+    parser.add_argument("--think", action="store_true", help="Enable thinking for Ollama models")
+    parser.add_argument("--details", action="store_true", help="Print full Q/A/GT for each question")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -205,6 +241,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     agent_factory = _make_agent_factory(
         args.provider, agent_kwargs,
         system_preamble=_SYSTEM_PREAMBLES.get(args.dataset),
+        think=args.think,
     )
     scorer = _make_scorer(
         args.dataset, judge_model=args.judge_model, ollama_url=args.ollama_url,
@@ -231,6 +268,8 @@ def main(argv: Optional[List[str]] = None) -> None:
 
         if not args.json:
             _print_report(report)
+            if args.details:
+                _print_details(report)
 
     if args.json:
         print(json.dumps([r.summary() for r in reports], indent=2))

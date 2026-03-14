@@ -18,6 +18,7 @@ class QuestionResult:
     question: str
     ground_truth: str
     prediction: str
+    category: str = ""
     scores: Dict[str, Any] = field(default_factory=dict)
     tools_used: List[str] = field(default_factory=list)
     latency_s: float = 0.0
@@ -56,10 +57,15 @@ class BenchmarkReport:
         scores = [s[key] for s in self.all_scores if key in s]
         return sum(scores) / len(scores) if scores else 0.0
 
+    @property
+    def all_question_results(self) -> List["QuestionResult"]:
+        return [qr for sr in self.sample_results for qr in sr.question_results]
+
     def summary(self) -> Dict[str, Any]:
         """Return a compact summary dict suitable for JSON serialization.
 
-        :returns: Dict with dataset, ablation, counts, and mean metrics.
+        :returns: Dict with dataset, ablation, counts, mean metrics, and
+            per-category breakdown.
         """
         all_s = self.all_scores
         keys: set[str] = set()
@@ -70,6 +76,27 @@ class BenchmarkReport:
             vals = [s[k] for s in all_s if k in s and isinstance(s[k], (int, float))]
             if vals:
                 means[k] = sum(vals) / len(vals)
+
+        # Per-category breakdown
+        per_category: Dict[str, Dict[str, Any]] = {}
+        for qr in self.all_question_results:
+            cat = qr.category or "unknown"
+            if cat not in per_category:
+                per_category[cat] = {"n": 0, "scores": [], "tools_failed": 0}
+            per_category[cat]["n"] += 1
+            per_category[cat]["scores"].append(qr.scores.get("score", 0))
+            if not qr.tools_used or "none" in qr.tools_used:
+                per_category[cat]["tools_failed"] += 1
+        cat_summary: Dict[str, Dict[str, Any]] = {}
+        for cat, info in sorted(per_category.items()):
+            scores = info["scores"]
+            cat_summary[cat] = {
+                "n": info["n"],
+                "mean_score": round(sum(scores) / len(scores), 2) if scores else 0,
+                "n_zero": sum(1 for s in scores if s == 0),
+                "n_perfect": sum(1 for s in scores if s == 100),
+            }
+
         return {
             "dataset": self.dataset,
             "ablation": self.ablation,
@@ -77,6 +104,7 @@ class BenchmarkReport:
             "n_samples": len(self.sample_results),
             "total_time_s": round(self.total_time_s, 1),
             "metrics": {k: round(v, 2) for k, v in means.items()},
+            "per_category": cat_summary,
         }
 
 
@@ -229,10 +257,14 @@ class BenchmarkRunner:
             for bq in sample.questions:
                 qr = self._run_question(agent, bq)
                 sr.question_results.append(qr)
+                tools_str = ",".join(qr.tools_used) if qr.tools_used else "none"
+                gt_short = qr.ground_truth[:40] if qr.ground_truth else "(empty)"
                 log.info(
-                    "  q=%s score=%.0f pred=%s",
-                    bq.question_id, qr.scores.get("score", -1),
-                    qr.prediction[:60],
+                    "  q=%s cat=%s score=%.0f tools=[%s] gt=%s pred=%s",
+                    bq.question_id, bq.category or "?",
+                    qr.scores.get("score", -1),
+                    tools_str, gt_short,
+                    qr.prediction[:80],
                 )
 
         finally:
@@ -262,6 +294,7 @@ class BenchmarkRunner:
             question=bq.question,
             ground_truth=bq.answer,
             prediction=result.answer,
+            category=bq.category,
             scores=scores,
             tools_used=result.tools_used,
             latency_s=latency,
