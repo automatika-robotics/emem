@@ -1,4 +1,5 @@
 import logging
+import re
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -106,6 +107,34 @@ class BenchmarkReport:
             "metrics": {k: round(v, 2) for k, v in means.items()},
             "per_category": cat_summary,
         }
+
+
+def _clean_answer(answer: str) -> str:
+    """Post-process an agent answer to remove leaked thinking and verbosity.
+
+    Strips meta-commentary (e.g. "Wait,", "Thought:", "Let me"), takes only
+    the first meaningful line, and truncates overly verbose answers.
+
+    :param answer: Raw agent answer.
+    :returns: Cleaned answer string.
+    """
+    # Strip leaked thinking / meta-commentary
+    answer = re.sub(
+        r"^(?:Thought|Wait|Hmm|Let me|Action|Observation|So,|Based on)[:\s].*?\n",
+        "",
+        answer,
+        flags=re.MULTILINE | re.IGNORECASE,
+    )
+    # Remove "Final Answer:" prefix if present
+    answer = re.sub(r"^Final Answer:\s*", "", answer, flags=re.IGNORECASE)
+    answer = answer.strip()
+    # Take first non-empty line only
+    for line in answer.split("\n"):
+        line = line.strip()
+        if line:
+            answer = line
+            break
+    return answer
 
 
 class _AblatedMemory:
@@ -287,13 +316,15 @@ class BenchmarkRunner:
         result = agent.run(query)
         latency = time.monotonic() - t0
 
-        scores = self._scorer.score(bq.question, result.answer, bq.answer)
+        answer = _clean_answer(result.answer)
+
+        scores = self._scorer.score(bq.question, answer, bq.answer)
 
         return QuestionResult(
             question_id=bq.question_id,
             question=bq.question,
             ground_truth=bq.answer,
-            prediction=result.answer,
+            prediction=answer,
             category=bq.category,
             scores=scores,
             tools_used=result.tools_used,

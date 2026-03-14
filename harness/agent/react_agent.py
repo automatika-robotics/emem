@@ -97,7 +97,7 @@ def _extract_json(text: str) -> dict[str, Any] | None:
 class _BaseReactAgent(ABC):
     """Base ReAct loop. Subclasses provide :meth:`_chat`."""
 
-    def __init__(self, mem: Any, max_steps: int = 5, system_prompt: str | None = None):
+    def __init__(self, mem: Any, max_steps: int = 3, system_prompt: str | None = None):
         self._mem = mem
         self._max_steps = max_steps
         self._system_prompt = system_prompt or build_system_prompt(

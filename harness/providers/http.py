@@ -85,12 +85,19 @@ def post_json_with_retry(
 def strip_think_tags(text: str) -> str:
     """Remove ``<think>...</think>`` blocks emitted by reasoning models.
 
+    Also strips orphaned ``</think>`` tags and trailing ``<think>`` blocks
+    that were never closed (model cut off mid-thought).
+
     :param text: Raw model output.
     :returns: Text with thinking blocks stripped.
     """
-    if "<think>" not in text:
-        return text
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    # Full <think>...</think> blocks
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    # Unclosed <think> at end of output
+    text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL)
+    # Orphaned </think> tag
+    text = text.replace("</think>", "")
+    return text.strip()
 
 
 def encode_image_b64(image: np.ndarray) -> str:

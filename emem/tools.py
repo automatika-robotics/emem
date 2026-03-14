@@ -137,7 +137,7 @@ class MemoryTools:
     def semantic_search(
         self,
         query: str,
-        n_results: int = 5,
+        n_results: int = 10,
         layer: Optional[str] = None,
         time_after: Optional[str] = None,
         time_before: Optional[str] = None,
@@ -335,7 +335,7 @@ class MemoryTools:
     def search_gists(
         self,
         query: str,
-        n_results: int = 5,
+        n_results: int = 10,
         time_after: Optional[str] = None,
         time_before: Optional[str] = None,
     ) -> str:
@@ -550,7 +550,7 @@ class MemoryTools:
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "description": "What to search for"},
-                        "n_results": {"type": "integer", "default": 5},
+                        "n_results": {"type": "integer", "default": 10},
                         "layer": {"type": "string", "description": "Filter by layer name"},
                         "time_after": {"type": "string", "description": "After this time (e.g. '-10m', '-1h')"},
                         "time_before": {"type": "string", "description": "Before this time"},
@@ -628,7 +628,7 @@ class MemoryTools:
                     "type": "object",
                     "properties": {
                         "query": {"type": "string"},
-                        "n_results": {"type": "integer", "default": 5},
+                        "n_results": {"type": "integer", "default": 10},
                         "time_after": {"type": "string"},
                         "time_before": {"type": "string"},
                     },
