@@ -118,9 +118,10 @@ def _clean_answer(answer: str) -> str:
     :param answer: Raw agent answer.
     :returns: Cleaned answer string.
     """
-    # Strip leaked thinking / meta-commentary
+    # Strip leaked thinking / meta-commentary (match lines with or without
+    # trailing newline so the pattern catches the last line too)
     answer = re.sub(
-        r"^(?:Thought|Wait|Hmm|Let me|Action|Observation|So,|Based on)[:\s].*?\n",
+        r"^(?:Thought|Wait|Hmm|Let me|Action|Action Input|Observation|So,|Based on)[:\s].*?(?:\n|$)",
         "",
         answer,
         flags=re.MULTILINE | re.IGNORECASE,
