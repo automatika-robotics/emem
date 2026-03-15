@@ -97,7 +97,7 @@ def _extract_json(text: str) -> dict[str, Any] | None:
 class _BaseReactAgent(ABC):
     """Base ReAct loop. Subclasses provide :meth:`_chat`."""
 
-    def __init__(self, mem: Any, max_steps: int = 3, system_prompt: str | None = None):
+    def __init__(self, mem: Any, max_steps: int = 5, system_prompt: str | None = None):
         self._mem = mem
         self._max_steps = max_steps
         self._system_prompt = system_prompt or build_system_prompt(
@@ -172,7 +172,7 @@ class ReactAgent(_BaseReactAgent):
         mem: Any,
         model: str = "qwen3.5:latest",
         base_url: str = "http://localhost:11434",
-        max_steps: int = 3,
+        max_steps: int = 5,
         system_prompt: str | None = None,
         think: bool = False,
     ):
@@ -210,7 +210,7 @@ class GeminiReactAgent(_BaseReactAgent):
         mem: Any,
         model: str = "gemini-2.0-flash-lite",
         api_key: str | None = None,
-        max_steps: int = 3,
+        max_steps: int = 5,
         system_prompt: str | None = None,
     ):
         super().__init__(mem, max_steps, system_prompt)

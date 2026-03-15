@@ -455,7 +455,6 @@ The `harness/benchmarks/academic/` module provides replay-based evaluation on es
 | Benchmark | Venue | Questions | Focus | Scorer |
 |-----------|-------|-----------|-------|--------|
 | **SQA3D** | ICLR 2023 | 33.4k situated QA | Spatial reasoning | Exact Match |
-| **OpenEQA** | CVPR 2024 | 1,600+ episodic QA | Episodic memory | LLM-Match (1-5 scale) |
 | **LoCoMo** | ACL 2024 | 1,986 conversational QA | Temporal reasoning | Token F1 + BLEU-1 |
 
 ### Ablation Study
@@ -483,11 +482,6 @@ python -m harness.run_benchmark \
   --dataset locomo --data-dir ./data/locomo \
   --max-samples 3 --ablation full
 
-# OpenEQA (needs HM3D/ScanNet frames)
-python -m harness.run_benchmark \
-  --dataset open-eqa --data-dir ./data/open-eqa \
-  --max-samples 20 --ablation full
-
 # Full ablation sweep with JSON output
 python -m harness.run_benchmark \
   --dataset sqa3d --data-dir ./data/sqa3d \
@@ -504,14 +498,13 @@ python -m harness.run_benchmark \
 ### CLI Options
 
 ```
---dataset         sqa3d | locomo | open-eqa
+--dataset         sqa3d | locomo
 --data-dir        Path to dataset directory
 --ablation        Comma-separated ablation names (default: full)
 --max-samples     Limit number of samples evaluated
 --provider        ollama | gemini (default: ollama)
 --embed-model     Embedding model (default: nomic-embed-text-v2-moe:latest)
 --llm-model       LLM for agent + consolidation (default: qwen3.5:latest)
---judge-model     LLM for scoring (OpenEQA only, default: qwen3.5:latest)
 --json            Output JSON report instead of formatted tables
 -v                Verbose logging
 ```
@@ -531,13 +524,6 @@ data/sqa3d/
 ```
 data/locomo/
   locomo.json   # array of conversations with sessions + qa_pairs
-```
-
-**OpenEQA:**
-```
-data/open-eqa/
-  open-eqa-v0.json
-  frames/{hm3d-v0|scannet-v0}/{episode_history}/*-rgb.png
 ```
 
 ## Development

@@ -11,7 +11,7 @@ from harness.benchmarks.academic.replay_runner import BenchmarkReport, Benchmark
 def _make_loader(dataset: str, data_dir: str) -> Any:
     """Create the appropriate dataset loader.
 
-    :param dataset: One of ``"sqa3d"``, ``"locomo"``, ``"open-eqa"``.
+    :param dataset: One of ``"sqa3d"``, ``"locomo"``.
     :param data_dir: Path to the dataset directory.
     :returns: Loader instance.
     """
@@ -21,16 +21,13 @@ def _make_loader(dataset: str, data_dir: str) -> Any:
     if dataset == "locomo":
         from harness.benchmarks.academic.loaders.locomo import LoCoMoLoader
         return LoCoMoLoader(data_dir)
-    if dataset == "open-eqa":
-        from harness.benchmarks.academic.loaders.open_eqa import OpenEQALoader
-        return OpenEQALoader(data_dir)
     raise ValueError(f"Unknown dataset: {dataset!r}")
 
 
 def _make_scorer(dataset: str, **kwargs: Any) -> Any:
     """Create the appropriate scorer for the given dataset.
 
-    :param dataset: One of ``"sqa3d"``, ``"locomo"``, ``"open-eqa"``.
+    :param dataset: One of ``"sqa3d"``, ``"locomo"``.
     :returns: Scorer instance.
     """
     if dataset == "sqa3d":
@@ -39,14 +36,6 @@ def _make_scorer(dataset: str, **kwargs: Any) -> Any:
     if dataset == "locomo":
         from harness.benchmarks.academic.scorers.f1 import F1Scorer
         return F1Scorer()
-    if dataset == "open-eqa":
-        from harness.benchmarks.academic.scorers.llm_match import LLMMatchScorer
-        from harness.providers.ollama_llm import OllamaLLMClient
-        llm = OllamaLLMClient(
-            model=kwargs.get("judge_model", "qwen3.5:latest"),
-            base_url=kwargs.get("ollama_url", "http://localhost:11434"),
-        )
-        return LLMMatchScorer(llm_chat=llm._chat)
     raise ValueError(f"Unknown dataset: {dataset!r}")
 
 
@@ -116,17 +105,13 @@ _QUESTION_TEMPLATES: Dict[str, str] = {
         "Based on the conversation history stored in memory, answer this question.\n"
         "Your answer MUST be 5 words or fewer. Give only the key fact.\n"
         "Convert any relative dates to absolute dates.\n"
-        "Do not explain or elaborate.\n\n"
+        "Do not explain or elaborate.\n"
+        "If the answer is NOT in memory, respond with exactly: UNANSWERABLE\n\n"
         "Question: {question}"
     ),
     "sqa3d": (
         "Based on the 3D scene objects stored in memory, answer this question.\n"
         "Give a short answer — a single word or brief phrase.\n\n"
-        "Question: {question}"
-    ),
-    "open-eqa": (
-        "Based on the observations stored in memory, answer this question.\n"
-        "Give a concise answer in one sentence or less.\n\n"
         "Question: {question}"
     ),
 }
@@ -139,6 +124,8 @@ _SYSTEM_PREAMBLES: Dict[str, str] = {
         "Your answers MUST be 5 words or fewer — just the key fact, no explanation. "
         "Always convert relative dates to absolute dates. "
         "Pay attention to timestamps on memories. "
+        "IMPORTANT: If the information is genuinely not in memory after searching, "
+        "answer with exactly: UNANSWERABLE "
         "You have access to the following tools:"
     ),
     "sqa3d": (
@@ -147,12 +134,6 @@ _SYSTEM_PREAMBLES: Dict[str, str] = {
         "Use the tools to find objects and answer spatial questions. Give short "
         "answers — a single word or brief phrase. "
         "You have access to the following tools:"
-    ),
-    "open-eqa": (
-        "You are an embodied question answering assistant. You have access to a "
-        "memory system that stores observations from exploring an environment. "
-        "Use the tools to recall what was observed and answer questions. Give "
-        "concise answers. You have access to the following tools:"
     ),
 }
 
@@ -207,14 +188,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     :param argv: Command-line arguments (defaults to ``sys.argv``).
     """
     parser = argparse.ArgumentParser(description="Academic benchmark evaluation for eMEM")
-    parser.add_argument("--dataset", required=True, choices=["sqa3d", "locomo", "open-eqa"])
+    parser.add_argument("--dataset", required=True, choices=["sqa3d", "locomo"])
     parser.add_argument("--data-dir", required=True, help="Path to dataset directory")
     parser.add_argument("--ablation", default="full", help="Comma-separated ablation names")
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--provider", default="ollama", choices=["ollama", "gemini"])
     parser.add_argument("--embed-model", default="nomic-embed-text-v2-moe:latest")
     parser.add_argument("--llm-model", default="qwen3.5:latest")
-    parser.add_argument("--judge-model", default="qwen3.5:latest")
     parser.add_argument("--ollama-url", default="http://localhost:11434")
     parser.add_argument("--gemini-api-key", default=None)
     parser.add_argument("--json", action="store_true", help="Output JSON report")
@@ -247,9 +227,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         system_preamble=_SYSTEM_PREAMBLES.get(args.dataset),
         think=args.think,
     )
-    scorer = _make_scorer(
-        args.dataset, judge_model=args.judge_model, ollama_url=args.ollama_url,
-    )
+    scorer = _make_scorer(args.dataset)
 
     mem_config_overrides: Dict[str, Any] = {}
     if args.recency_weight > 0:

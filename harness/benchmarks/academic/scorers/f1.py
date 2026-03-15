@@ -44,6 +44,8 @@ class F1Scorer:
         :param gold: Gold reference tokens.
         :returns: F1 score in [0, 1].
         """
+        if not pred and not gold:
+            return 1.0
         if not pred or not gold:
             return 0.0
         pred_counts = Counter(pred)
@@ -63,6 +65,8 @@ class F1Scorer:
         :param gold: Gold reference tokens.
         :returns: BLEU-1 score in [0, 1].
         """
+        if not pred and not gold:
+            return 1.0
         if not pred or not gold:
             return 0.0
         pred_counts = Counter(pred)

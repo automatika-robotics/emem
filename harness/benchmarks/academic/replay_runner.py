@@ -109,11 +109,30 @@ class BenchmarkReport:
         }
 
 
+_UNANSWERABLE_RE = re.compile(
+    r"^("
+    r"unanswerable"
+    r"|(?:no |not )?"
+    r"(?:information|info|record|records|data|details?|mention|evidence|result|results)"
+    r"(?:\s+(?:is\s+)?(?:not\s+)?(?:found|available|stored|recorded|specified|mentioned|documented|known|in memory))*"
+    r".*"
+    r"|not (?:found|available|stored|recorded|specified|mentioned|documented|known)(?: (?:in|from) (?:memory|records?|our records?|stored memories|conversation history?))?\.?"
+    r"|(?:no (?:such )?(?:record|information|info|data|details?|mention|evidence|result|results) (?:found|available|in memory).*)"
+    r"|(?:insufficient information.*)"
+    r"|(?:unknown.*)"
+    r"|not in (?:memory|records?|our records?|conversation history)"
+    r"|none(?: recorded| specified| found)?"
+    r")$",
+    re.IGNORECASE,
+)
+
+
 def _clean_answer(answer: str) -> str:
     """Post-process an agent answer to remove leaked thinking and verbosity.
 
     Strips meta-commentary (e.g. "Wait,", "Thought:", "Let me"), takes only
-    the first meaningful line, and truncates overly verbose answers.
+    the first meaningful line, and maps "not found" / unanswerable responses
+    to empty string so they score correctly against empty ground truth.
 
     :param answer: Raw agent answer.
     :returns: Cleaned answer string.
@@ -135,6 +154,9 @@ def _clean_answer(answer: str) -> str:
         if line:
             answer = line
             break
+    # Map "not found" / unanswerable responses to empty string
+    if _UNANSWERABLE_RE.match(answer.strip().rstrip(".")):
+        return ""
     return answer
 
 
