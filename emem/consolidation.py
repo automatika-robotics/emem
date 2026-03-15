@@ -58,19 +58,27 @@ class ConsolidationEngine:
         self.config = config or SpatioTemporalMemoryConfig()
         self._summarizer = llm_client or ConcatenationSummarizer()
 
-    def consolidate_episode(self, episode_id: str) -> Optional[str]:
-        """Generate a gist from all observations in an episode.
+    def consolidate_episode(self, episode_id: str) -> List[str]:
+        """Generate gists from observations in an episode, chunked by time.
+
+        Observations are split into temporal chunks using
+        ``consolidation_window``.  Each chunk produces its own gist, so long
+        episodes get multiple focused summaries instead of one monolithic one.
 
         :param episode_id: Episode to consolidate.
-        :returns: Created gist ID, or ``None`` if the episode had no observations.
-        :rtype: Optional[str]
+        :returns: List of created gist IDs (empty if episode had no observations).
+        :rtype: List[str]
         """
         observations = self.store.get_episode_observations(episode_id)
         if not observations:
-            return None
+            return []
 
-        gist = self._create_gist_from_observations(observations, episode_id=episode_id)
-        gist_id = self.store.add_gist(gist)
+        chunks = self._temporal_chunk(observations)
+        gist_ids = []
+        for chunk in chunks:
+            gist = self._create_gist_from_observations(chunk, episode_id=episode_id)
+            gist_id = self.store.add_gist(gist)
+            gist_ids.append(gist_id)
 
         self._extract_and_merge_entities(observations)
 
@@ -78,7 +86,7 @@ class ConsolidationEngine:
             [obs.id for obs in observations], Tier.LONG_TERM.value, drop_text=False,
         )
 
-        return gist_id
+        return gist_ids
 
     def consolidate_time_window(self, reference_time: Optional[float] = None) -> List[str]:
         """Cluster old short-term observations by spatial proximity and
@@ -131,6 +139,31 @@ class ConsolidationEngine:
             [obs.id for obs in candidates], Tier.ARCHIVED.value, drop_text=True,
         )
         return len(candidates)
+
+    def _temporal_chunk(self, observations: List[ObservationNode]) -> List[List[ObservationNode]]:
+        """Split observations into chunks separated by time gaps.
+
+        A new chunk starts whenever the gap between consecutive observations
+        exceeds ``consolidation_window``.  All chunks are returned regardless
+        of size.
+
+        :param observations: Observations to chunk (need not be sorted).
+        :returns: List of temporally contiguous chunks.
+        :rtype: List[List[ObservationNode]]
+        """
+        if not observations:
+            return []
+
+        sorted_obs = sorted(observations, key=lambda o: o.timestamp)
+        chunks: List[List[ObservationNode]] = [[sorted_obs[0]]]
+
+        for obs in sorted_obs[1:]:
+            if obs.timestamp - chunks[-1][-1].timestamp > self.config.consolidation_window:
+                chunks.append([obs])
+            else:
+                chunks[-1].append(obs)
+
+        return chunks
 
     def _spatial_cluster(self, observations: List[ObservationNode]) -> List[List[ObservationNode]]:
         if len(observations) < self.config.consolidation_min_samples:

@@ -213,12 +213,15 @@ class SpatioTemporalMemory:
         self._wm.active_episode_id = None
 
         if consolidate:
-            gist_id = self._consolidation.consolidate_episode(ep_id)
+            gist_ids = self._consolidation.consolidate_episode(ep_id)
             gist_text = ""
-            if gist_id:
-                gist = self._store.get_gist(gist_id)
-                if gist:
-                    gist_text = gist.text
+            if gist_ids:
+                gist_texts = []
+                for gid in gist_ids:
+                    g = self._store.get_gist(gid)
+                    if g and g.text:
+                        gist_texts.append(g.text)
+                gist_text = "\n".join(gist_texts)
             self._store.end_episode(ep_id, self._get_time(), gist=gist_text)
         else:
             self._store.end_episode(ep_id, self._get_time())

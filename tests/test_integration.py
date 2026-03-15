@@ -182,9 +182,11 @@ def test_full_pipeline(system):
     # ── Phase 3: Consolidation ────────────────────────────────────
 
     # Consolidate episode 1
-    gist1_id = consolidation.consolidate_episode(ep1_id)
-    assert gist1_id is not None
-    gist1 = store.get_gist(gist1_id)
+    gist1_ids = consolidation.consolidate_episode(ep1_id)
+    assert len(gist1_ids) >= 1
+    gist1 = store.get_gist(gist1_ids[0])
+    # All 15 observations are within one consolidation_window (500s),
+    # so they should be in a single chunk
     assert gist1.source_observation_count == 15
 
     # Episode 1 observations should be demoted to long_term
@@ -220,8 +222,8 @@ def test_full_pipeline(system):
     assert len(edges) == 20  # 20 hallway observations
 
     # Gist summarizes edges
-    if gist1_id:
-        gist_edges = store.get_edges(source_id=gist1_id, edge_type=EdgeType.SUMMARIZES)
+    if gist1_ids[0]:
+        gist_edges = store.get_edges(source_id=gist1_ids[0], edge_type=EdgeType.SUMMARIZES)
         assert len(gist_edges) == 15
 
     # ── Phase 6: Dispatch tool calls ──────────────────────────────

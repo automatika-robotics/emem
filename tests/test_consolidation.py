@@ -48,10 +48,10 @@ class TestEpisodeConsolidation:
         store.add_observation(_obs("saw a table", x=1.5, y=1.5, ts=1002.0, episode_id=ep_id))
         store.end_episode(ep_id, 1003.0)
 
-        gist_id = engine.consolidate_episode(ep_id)
-        assert gist_id is not None
+        gist_ids = engine.consolidate_episode(ep_id)
+        assert len(gist_ids) == 1
 
-        gist = store.get_gist(gist_id)
+        gist = store.get_gist(gist_ids[0])
         assert "chair" in gist.text
         assert "table" in gist.text
         assert gist.source_observation_count == 2
@@ -65,7 +65,7 @@ class TestEpisodeConsolidation:
     def test_consolidate_empty_episode(self, store, engine):
         ep_id = store.start_episode("empty", 1000.0)
         result = engine.consolidate_episode(ep_id)
-        assert result is None
+        assert result == []
 
 
 class TestTimeWindowConsolidation:
@@ -151,8 +151,8 @@ class TestCrossLayerSynthesis:
         store.add_observation(self._obs_with_layer("chair, table", "detections", ts=1002.0, episode_id=ep_id))
         store.end_episode(ep_id, 1003.0)
 
-        gist_id = engine.consolidate_episode(ep_id)
-        gist = store.get_gist(gist_id)
+        gist_ids = engine.consolidate_episode(ep_id)
+        gist = store.get_gist(gist_ids[0])
         # Should use synthesize format with layer headers
         assert "[vlm]" in gist.text
         assert "[detections]" in gist.text
@@ -170,8 +170,8 @@ class TestCrossLayerSynthesis:
         store.add_observation(self._obs_with_layer("saw table", "vlm", ts=1002.0, episode_id=ep_id))
         store.end_episode(ep_id, 1003.0)
 
-        gist_id = engine.consolidate_episode(ep_id)
-        gist = store.get_gist(gist_id)
+        gist_ids = engine.consolidate_episode(ep_id)
+        gist = store.get_gist(gist_ids[0])
         # Single layer: uses summarize (pipe-separated)
         assert "saw chair" in gist.text
         assert "saw table" in gist.text
@@ -193,8 +193,8 @@ class TestCrossLayerSynthesis:
         store.add_observation(self._obs_with_layer("chair", "detections", ts=1002.0, episode_id=ep_id))
         store.end_episode(ep_id, 1003.0)
 
-        gist_id = engine.consolidate_episode(ep_id)
-        gist = store.get_gist(gist_id)
+        gist_ids = engine.consolidate_episode(ep_id)
+        gist = store.get_gist(gist_ids[0])
         # Without synthesize, should fall back to summarize
         assert "[vlm]" not in gist.text
         assert "white cabinets" in gist.text

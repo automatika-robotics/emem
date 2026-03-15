@@ -106,7 +106,10 @@ _QUESTION_TEMPLATES: Dict[str, str] = {
         "Your answer MUST be 5 words or fewer. Give only the key fact.\n"
         "Convert any relative dates to absolute dates.\n"
         "Do not explain or elaborate.\n"
-        "If the answer is NOT in memory, respond with exactly: UNANSWERABLE\n\n"
+        "For questions asking 'would', 'might', or 'likely', reason from what "
+        "you find in memory rather than saying UNANSWERABLE.\n"
+        "If the answer is NOT in memory after trying multiple searches, "
+        "respond with exactly: UNANSWERABLE\n\n"
         "Question: {question}"
     ),
     "sqa3d": (
@@ -124,8 +127,9 @@ _SYSTEM_PREAMBLES: Dict[str, str] = {
         "Your answers MUST be 5 words or fewer — just the key fact, no explanation. "
         "Always convert relative dates to absolute dates. "
         "Pay attention to timestamps on memories. "
-        "IMPORTANT: If the information is genuinely not in memory after searching, "
-        "answer with exactly: UNANSWERABLE "
+        "Before answering UNANSWERABLE, you MUST try at least 2 different search "
+        "queries with different phrasings. Only say UNANSWERABLE after multiple "
+        "failed searches. "
         "You have access to the following tools:"
     ),
     "sqa3d": (
