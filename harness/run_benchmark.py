@@ -21,6 +21,9 @@ def _make_loader(dataset: str, data_dir: str) -> Any:
     if dataset == "locomo":
         from harness.benchmarks.academic.loaders.locomo import LoCoMoLoader
         return LoCoMoLoader(data_dir)
+    if dataset == "emem-bench":
+        from harness.benchmarks.academic.loaders.emem_bench import EMEMBenchLoader
+        return EMEMBenchLoader(data_dir)
     raise ValueError(f"Unknown dataset: {dataset!r}")
 
 
@@ -36,6 +39,18 @@ def _make_scorer(dataset: str, **kwargs: Any) -> Any:
     if dataset == "locomo":
         from harness.benchmarks.academic.scorers.f1 import F1Scorer
         return F1Scorer()
+    if dataset == "emem-bench":
+        from harness.benchmarks.academic.scorers.llm_match import LLMMatchScorer
+
+        # LLMMatchScorer needs a raw prompt→response function.
+        # LLM clients only expose this as private _chat/_generate.
+        llm_client = kwargs.get("llm_client")
+        provider = kwargs.get("provider", "ollama")
+        if provider == "gemini":
+            llm_chat = llm_client._generate
+        else:
+            llm_chat = llm_client._chat
+        return LLMMatchScorer(llm_chat=llm_chat)
     raise ValueError(f"Unknown dataset: {dataset!r}")
 
 
@@ -117,6 +132,13 @@ _QUESTION_TEMPLATES: Dict[str, str] = {
         "Give a short answer — a single word or brief phrase.\n\n"
         "Question: {question}"
     ),
+    "emem-bench": (
+        "You are an embodied agent with a spatio-temporal memory of your exploration.\n"
+        "Use your memory tools to answer the following question.\n"
+        "Give a concise answer — a short phrase or sentence.\n"
+        "Use spatial coordinates when relevant.\n\n"
+        "Question: {question}"
+    ),
 }
 
 _SYSTEM_PREAMBLES: Dict[str, str] = {
@@ -137,6 +159,16 @@ _SYSTEM_PREAMBLES: Dict[str, str] = {
         "a memory system that stores objects and their 3D positions in a scene. "
         "Use the tools to find objects and answer spatial questions. Give short "
         "answers — a single word or brief phrase. "
+        "You have access to the following tools:"
+    ),
+    "emem-bench": (
+        "You are an embodied robot assistant with a spatio-temporal memory system. "
+        "You have explored an environment and stored observations across multiple "
+        "perception layers (visual descriptions, object detections, place labels) "
+        "as well as body state (battery, temperature). "
+        "Use the available tools to search your memory and answer questions about "
+        "what you observed, where things are, and your body state. "
+        "Give concise answers. Use spatial coordinates when they help. "
         "You have access to the following tools:"
     ),
 }
@@ -192,7 +224,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     :param argv: Command-line arguments (defaults to ``sys.argv``).
     """
     parser = argparse.ArgumentParser(description="Academic benchmark evaluation for eMEM")
-    parser.add_argument("--dataset", required=True, choices=["sqa3d", "locomo"])
+    parser.add_argument("--dataset", required=True, choices=["sqa3d", "locomo", "emem-bench"])
     parser.add_argument("--data-dir", required=True, help="Path to dataset directory")
     parser.add_argument("--ablation", default="full", help="Comma-separated ablation names")
     parser.add_argument("--max-samples", type=int, default=None)
@@ -231,7 +263,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         system_preamble=_SYSTEM_PREAMBLES.get(args.dataset),
         think=args.think,
     )
-    scorer = _make_scorer(args.dataset)
+    scorer = _make_scorer(args.dataset, llm_client=llm, provider=args.provider)
 
     mem_config_overrides: Dict[str, Any] = {}
     if args.recency_weight > 0:

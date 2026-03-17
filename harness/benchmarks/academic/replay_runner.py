@@ -292,17 +292,25 @@ class BenchmarkRunner:
             mem.start_episode(sample.scene_id)
 
             for frame in sample.trajectory:
+                is_interoception = frame.layer_name.startswith("interoception:")
                 layer = frame.layer_name
-                if not self._ablation.use_multi_layer:
+                if not self._ablation.use_multi_layer and not is_interoception:
                     layer = "default"
-                mem.add(
-                    text=frame.text,
-                    x=frame.position[0],
-                    y=frame.position[1],
-                    z=frame.position[2],
-                    timestamp=frame.timestamp,
-                    layer_name=layer,
-                )
+                if is_interoception:
+                    mem.add_body_state(
+                        text=frame.text,
+                        layer_name=layer,
+                        timestamp=frame.timestamp,
+                    )
+                else:
+                    mem.add(
+                        text=frame.text,
+                        x=frame.position[0],
+                        y=frame.position[1],
+                        z=frame.position[2],
+                        timestamp=frame.timestamp,
+                        layer_name=layer,
+                    )
                 sr.n_observations += 1
 
             mem.end_episode(consolidate=self._ablation.use_consolidation)
