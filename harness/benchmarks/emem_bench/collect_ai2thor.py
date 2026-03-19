@@ -278,7 +278,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         default=None,
         help="Comma-separated scene names (default: 30 diverse scenes)",
     )
-    parser.add_argument("--vlm-model", default="gemma3:4b")
+    parser.add_argument("--vlm-model", default="qwen3.5:latest")
     parser.add_argument("--ollama-url", default="http://localhost:11434")
     parser.add_argument("--output", required=True, help="Output directory for scene data")
     parser.add_argument("--index", default=None,
@@ -330,6 +330,14 @@ def main(argv: Optional[List[str]] = None) -> None:
         index_path = args.index
     else:
         index_path = os.path.normpath(os.path.join(args.output, "..", "emem-bench-v0.json"))
+
+    # Make trajectory_path entries relative to the index file's directory
+    index_dir = os.path.dirname(os.path.abspath(index_path))
+    output_abs = os.path.abspath(args.output)
+    for s in all_samples:
+        abs_traj = os.path.join(output_abs, s["trajectory_path"])
+        s["trajectory_path"] = os.path.relpath(abs_traj, index_dir)
+
     existing: List[Dict[str, Any]] = []
     if os.path.exists(index_path):
         with open(index_path) as f:

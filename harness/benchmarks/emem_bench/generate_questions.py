@@ -516,11 +516,16 @@ def main(argv: Optional[List[str]] = None) -> None:
                 found = True
                 break
         if not found:
+            # Make trajectory_path relative to the index file's directory
+            output_dir = os.path.dirname(os.path.abspath(args.output))
+            rel_traj = os.path.relpath(
+                os.path.abspath(traj_path), output_dir,
+            )
             index.append({
                 "sample_id": sample_id,
                 "scene_id": sample.get("scene_id", scene_dir),
                 "source": sample.get("source", "ai2thor"),
-                "trajectory_path": f"{scene_dir}/trajectory.json",
+                "trajectory_path": rel_traj,
                 "n_questions": len(questions),
             })
 
