@@ -1,5 +1,6 @@
 import re
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -32,6 +33,8 @@ def _format_observation(obs: Any, include_coords: bool = True) -> str:
     if include_coords:
         c = obs.coordinates
         parts.append(f"({c[0]:.1f},{c[1]:.1f})")
+    dt = datetime.fromtimestamp(obs.timestamp, tz=timezone.utc)
+    parts.append(f"[{dt.strftime('%Y-%m-%d %H:%M:%S')}]")
     parts.append(obs.text)
     return " ".join(parts)
 
@@ -278,6 +281,15 @@ class MemoryTools:
             status = ep.status
             gist = ep.gist or "(no summary)"
             line = f"[{ep.name}] ({status}) {gist}"
+            obs = self.store.get_episode_observations(ep.id)
+            if obs:
+                t0 = datetime.fromtimestamp(obs[0].timestamp, tz=timezone.utc)
+                t1 = datetime.fromtimestamp(obs[-1].timestamp, tz=timezone.utc)
+                line += (
+                    f"\n  ({len(obs)} observations from "
+                    f"{t0.strftime('%Y-%m-%d %H:%M:%S')} to "
+                    f"{t1.strftime('%Y-%m-%d %H:%M:%S')})"
+                )
             lines.append(line)
         return "\n".join(lines)
 

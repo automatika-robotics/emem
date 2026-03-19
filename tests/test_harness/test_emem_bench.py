@@ -7,7 +7,10 @@ import tempfile
 import pytest
 
 from harness.benchmarks.academic.loaders.emem_bench import EMEMBenchLoader
+from harness.benchmarks.academic.trajectory import BenchmarkQuestion
 from harness.benchmarks.emem_bench.generate_questions import (
+    _is_valid_caption,
+    _is_valid_place,
     generate_questions_for_sample,
 )
 
@@ -263,3 +266,150 @@ class TestQuestionGeneration:
         intero = [q for q in questions if q["category"] == "interoception"]
         assert len(intero) >= 1
         assert any("battery" in q["question"].lower() for q in intero)
+
+
+class TestCaptionFiltering:
+    def test_rejects_garbage_captions(self):
+        assert not _is_valid_caption("")
+        assert not _is_valid_caption("hello")  # too short
+        assert not _is_valid_caption(
+            "This image displays a uniform brown surface with no discernible objects"
+        )
+        assert not _is_valid_caption(
+            "the image you uploaded consists solely of a uniform brown color"
+        )
+        assert not _is_valid_caption("I cannot identify any objects in this image")
+
+    def test_accepts_good_captions(self):
+        assert _is_valid_caption("A kitchen counter with a red mug and a toaster")
+        assert _is_valid_caption("sofa, TV, coffee table, bookshelf")
+        assert _is_valid_caption("A living room with a sofa and TV")
+
+    def test_rejects_garbage_places(self):
+        assert not _is_valid_place("abstract")
+        assert not _is_valid_place("wallpaper")
+        assert not _is_valid_place("wall")
+        assert not _is_valid_place("")
+        assert not _is_valid_place(
+            "the image you uploaded consists solely of a uniform brown color"
+        )
+
+    def test_accepts_valid_places(self):
+        assert _is_valid_place("kitchen")
+        assert _is_valid_place("Kitchen")
+        assert _is_valid_place("living room")
+        assert _is_valid_place("bathroom")
+        assert _is_valid_place("hallway")
+
+
+class TestQuestionGenerationFixes:
+    def test_no_structural_objects(self):
+        """Spatial questions should not ask about Floor, Wall, etc."""
+        sample = _make_sample()
+        # Add structural objects
+        sample["metadata"]["scene_objects"].extend([
+            {
+                "objectId": "Floor|0|0|0",
+                "objectType": "Floor",
+                "name": "Floor",
+                "position": [0, 0, 0],
+                "visible": True,
+                "pickupable": False,
+                "receptacle": False,
+                "parentReceptacles": [],
+            },
+            {
+                "objectId": "Wall|0|0|0",
+                "objectType": "Wall",
+                "name": "Wall",
+                "position": [0, 0, 0],
+                "visible": True,
+                "pickupable": False,
+                "receptacle": False,
+                "parentReceptacles": [],
+            },
+        ])
+        questions = generate_questions_for_sample(sample)
+        spatial = [q for q in questions if q["category"] == "spatial"]
+        for q in spatial:
+            assert "floor" not in q["question"].lower() or "floorplan" in q["question"].lower()
+            assert "Where is the wall?" != q["question"]
+
+    def test_no_entity_count_questions(self):
+        """No 'How many times have I seen X?' questions should be generated."""
+        sample = _make_sample()
+        questions = generate_questions_for_sample(sample)
+        for q in questions:
+            assert "how many times" not in q["question"].lower()
+
+    def test_no_duplicate_questions(self):
+        """All question texts should be unique."""
+        sample = _make_sample()
+        questions = generate_questions_for_sample(sample)
+        texts = [q["question"] for q in questions]
+        assert len(texts) == len(set(texts))
+
+    def test_temporal_no_raw_timestamp(self):
+        """'When did I last see X?' should not contain raw Unix timestamps."""
+        sample = _make_sample()
+        questions = generate_questions_for_sample(sample)
+        temporal = [q for q in questions if q["category"] == "temporal"]
+        for q in temporal:
+            if "when" in q["question"].lower() and "last" in q["question"].lower():
+                assert "at timestamp" not in q["answer"]
+
+    def test_describe_area_concise_gt(self):
+        """Descriptive GT should be concise, not raw caption dumps."""
+        sample = _make_sample()
+        questions = generate_questions_for_sample(sample)
+        for q in questions:
+            if "describe" in q["question"].lower() or "tell me everything" in q["question"].lower():
+                word_count = len(q["answer"].split())
+                assert word_count < 100, f"GT too long ({word_count} words): {q['answer'][:80]}..."
+
+
+class TestToolsExpected:
+    def test_benchmark_question_has_tools_expected(self):
+        """BenchmarkQuestion dataclass should have tools_expected field."""
+        bq = BenchmarkQuestion(
+            question_id="q1", question="test", answer="test",
+        )
+        assert bq.tools_expected == []
+
+        bq2 = BenchmarkQuestion(
+            question_id="q2", question="test", answer="test",
+            tools_expected=["locate", "semantic_search"],
+        )
+        assert bq2.tools_expected == ["locate", "semantic_search"]
+
+    def test_loader_extracts_tools_expected(self, tmp_path):
+        """Loader should preserve tools_expected from JSON."""
+        sample = _make_sample()
+        (tmp_path / "emem-bench-v0.json").write_text(json.dumps([sample]))
+
+        loader = EMEMBenchLoader(str(tmp_path))
+        samples = list(loader.load())
+        q1 = samples[0].questions[0]
+        assert q1.tools_expected == ["locate", "semantic_search"]
+        q2 = samples[0].questions[1]
+        assert q2.tools_expected == ["body_status"]
+
+
+class TestFormatObservation:
+    def test_includes_timestamp(self):
+        """_format_observation should include a timestamp."""
+        from emem.tools import _format_observation
+        from emem.types import ObservationNode
+        import numpy as np
+
+        obs = ObservationNode(
+            text="A red mug on the counter",
+            coordinates=np.array([1.0, 2.0, 0.0]),
+            timestamp=1710000042.0,
+            layer_name="vlm",
+        )
+        result = _format_observation(obs)
+        assert "[vlm]" in result
+        assert "(1.0,2.0)" in result
+        assert "2024-03-09" in result  # UTC date for timestamp 1710000042
+        assert "A red mug on the counter" in result
