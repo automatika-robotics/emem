@@ -101,6 +101,28 @@ def _is_valid_place(place: str) -> bool:
     return place.strip().lower() in VALID_PLACES
 
 
+_GARBAGE_DETECTION_RE = re.compile(
+    r"^[^a-zA-Z]*$"          # no letters at all (operators, numbers)
+    r"|^.{1,2}$"             # too short (single/double chars)
+    r"|^background$"
+    r"|^architectural"
+    r"|^color"
+    r"|^texture"
+    r"|^shadow"
+    r"|^lighting"
+    r"|^image$",
+    re.IGNORECASE,
+)
+
+
+def _is_valid_detection(item: str) -> bool:
+    """Return True if *item* is a plausible object detection, not VLM noise."""
+    item = item.strip()
+    if not item or len(item) < 2:
+        return False
+    return _GARBAGE_DETECTION_RE.search(item) is None
+
+
 # ── Helpers ──────────────────────────────────────────────────────────
 
 def _format_object_name(object_type: str) -> str:
@@ -178,7 +200,7 @@ def _detections_near(
             detections = frame.get("layers", {}).get("detections", "")
             for d in detections.split(","):
                 d = d.strip()
-                if d:
+                if d and _is_valid_detection(d):
                     items.add(d)
     return sorted(items)
 
@@ -209,7 +231,7 @@ def _top_detection_items(
         detections = frame.get("layers", {}).get("detections", "")
         for d in detections.split(","):
             d = d.strip()
-            if d:
+            if d and _is_valid_detection(d):
                 counter[d] += 1
     return [item for item, _ in counter.most_common(top_n)]
 
@@ -350,7 +372,8 @@ def _temporal_questions(
     sampled_items_seen: Set[str] = set()
     for frame in random.sample(trajectory, min(5, len(trajectory))):
         detections = frame.get("layers", {}).get("detections", "")
-        items = [d.strip() for d in detections.split(",") if d.strip()]
+        items = [d.strip() for d in detections.split(",")
+                 if d.strip() and _is_valid_detection(d.strip())]
         if not items:
             continue
         obj = random.choice(items)
@@ -437,7 +460,8 @@ def _cross_layer_questions(
         all_items: Set[str] = set()
         for det in det_lists:
             all_items.update(
-                d.strip() for d in det.split(",") if d.strip()
+                d.strip() for d in det.split(",")
+                if d.strip() and _is_valid_detection(d.strip())
             )
         if all_items:
             questions.append({
@@ -497,7 +521,7 @@ def _entity_questions(
         place = frame.get("layers", {}).get("place", "").strip().lower()
         for item in detections.split(","):
             item = item.strip().lower()
-            if not item:
+            if not item or not _is_valid_detection(item):
                 continue
             obj_counts[item] += 1
             if item not in obj_first_pos:
@@ -527,13 +551,18 @@ def _entity_questions(
             "tools_expected": ["entity_query", "semantic_search"],
         })
 
-    # "Where have you seen X?" — list distinct places
+    # "Where have you seen X?" — list distinct places with coordinates
     for obj_name, _count in frequent[:3]:
         pl = obj_places.get(obj_name, set())
         if pl:
+            # Include a representative position from obj_first_pos
+            pos_info = obj_first_pos.get(obj_name, {})
+            pos = pos_info.get("position", [0, 0, 0])
+            answer = ", ".join(sorted(pl))
+            answer += f" (e.g. near ({pos[0]:.1f}, {pos[1]:.1f}))"
             questions.append({
                 "question": f"Where have you seen {obj_name}?",
-                "answer": ", ".join(sorted(pl)),
+                "answer": answer,
                 "category": "entity",
                 "tools_expected": ["entity_query", "semantic_search"],
             })
@@ -566,7 +595,8 @@ def _entity_questions(
     # "What objects appear together with X?"
     for frame in random.sample(trajectory, min(3, len(trajectory))):
         detections = frame.get("layers", {}).get("detections", "")
-        items = [d.strip() for d in detections.split(",") if d.strip()]
+        items = [d.strip() for d in detections.split(",")
+                 if d.strip() and _is_valid_detection(d.strip())]
         if len(items) >= 2:
             anchor = items[0]
             cooccur = ", ".join(items[1:4])
