@@ -212,5 +212,6 @@ class EMEMBenchLoader:
                 question=str(qa.get("question", "")),
                 answer=str(qa.get("answer", "")),
                 category=str(qa.get("category", "")),
+                tools_expected=list(qa.get("tools_expected", [])),
             ))
         return questions

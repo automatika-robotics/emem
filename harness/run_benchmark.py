@@ -40,17 +40,12 @@ def _make_scorer(dataset: str, **kwargs: Any) -> Any:
         from harness.benchmarks.academic.scorers.f1 import F1Scorer
         return F1Scorer()
     if dataset == "emem-bench":
-        from harness.benchmarks.academic.scorers.llm_match import LLMMatchScorer
+        from harness.benchmarks.academic.scorers.emem_bench import EMEMBenchScorer
 
-        # LLMMatchScorer needs a raw prompt→response function.
-        # LLM clients only expose this as private _chat/_generate.
         llm_client = kwargs.get("llm_client")
         provider = kwargs.get("provider", "ollama")
-        if provider == "gemini":
-            llm_chat = llm_client._generate
-        else:
-            llm_chat = llm_client._chat
-        return LLMMatchScorer(llm_chat=llm_chat)
+        llm_chat = llm_client._generate if provider == "gemini" else llm_client._chat
+        return EMEMBenchScorer(llm_chat=llm_chat)
     raise ValueError(f"Unknown dataset: {dataset!r}")
 
 

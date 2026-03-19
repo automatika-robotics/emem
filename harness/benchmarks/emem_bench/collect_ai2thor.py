@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from harness.benchmarks.academic.caption_cache import CaptionCache
+from harness.benchmarks.emem_bench.generate_questions import _is_valid_caption, _is_valid_place
 from harness.environments.ai2thor_adapter import AI2ThorAdapter
 
 log = logging.getLogger(__name__)
@@ -200,11 +201,18 @@ def collect_scene(
                 cache_key = f"{scene}_{frame_id}"
                 cached = cache.get(cache_key, prompt, vlm_model)
                 if cached is not None:
-                    layers[layer_name] = cached
+                    caption = cached
                 else:
                     caption = vlm.describe(frame, prompt)
                     cache.put(cache_key, prompt, vlm_model, caption)
-                    layers[layer_name] = caption
+
+                # Filter invalid captions at collection time
+                if layer_name == "place" and not _is_valid_place(caption):
+                    caption = ""
+                elif layer_name in ("vlm", "detections") and not _is_valid_caption(caption):
+                    caption = ""
+
+                layers[layer_name] = caption
 
             waypoint: Dict[str, Any] = {
                 "frame_id": frame_id,

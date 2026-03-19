@@ -22,6 +22,7 @@ class QuestionResult:
     category: str = ""
     scores: Dict[str, Any] = field(default_factory=dict)
     tools_used: List[str] = field(default_factory=list)
+    tools_expected: List[str] = field(default_factory=list)
     latency_s: float = 0.0
 
 
@@ -83,20 +84,38 @@ class BenchmarkReport:
         for qr in self.all_question_results:
             cat = qr.category or "unknown"
             if cat not in per_category:
-                per_category[cat] = {"n": 0, "scores": [], "tools_failed": 0}
+                per_category[cat] = {"n": 0, "scores": [], "tools_failed": 0, "tool_jaccard": []}
             per_category[cat]["n"] += 1
             per_category[cat]["scores"].append(qr.scores.get("score", 0))
             if not qr.tools_used or "none" in qr.tools_used:
                 per_category[cat]["tools_failed"] += 1
+            if qr.tools_expected:
+                expected = set(qr.tools_expected)
+                used = set(qr.tools_used)
+                union = expected | used
+                jaccard = len(expected & used) / len(union) if union else 1.0
+                per_category[cat]["tool_jaccard"].append(jaccard)
         cat_summary: Dict[str, Dict[str, Any]] = {}
         for cat, info in sorted(per_category.items()):
             scores = info["scores"]
-            cat_summary[cat] = {
+            tj = info["tool_jaccard"]
+            cat_entry: Dict[str, Any] = {
                 "n": info["n"],
                 "mean_score": round(sum(scores) / len(scores), 2) if scores else 0,
                 "n_zero": sum(1 for s in scores if s == 0),
                 "n_perfect": sum(1 for s in scores if s == 100),
             }
+            if tj:
+                cat_entry["tool_accuracy"] = round(sum(tj) / len(tj), 2)
+            cat_summary[cat] = cat_entry
+
+        # Aggregate tool selection accuracy across all categories
+        all_tj: List[float] = []
+        for info in per_category.values():
+            all_tj.extend(info["tool_jaccard"])
+        metrics = {k: round(v, 2) for k, v in means.items()}
+        if all_tj:
+            metrics["tool_selection_accuracy"] = round(sum(all_tj) / len(all_tj), 2)
 
         return {
             "dataset": self.dataset,
@@ -104,7 +123,7 @@ class BenchmarkReport:
             "n_questions": len(all_s),
             "n_samples": len(self.sample_results),
             "total_time_s": round(self.total_time_s, 1),
-            "metrics": {k: round(v, 2) for k, v in means.items()},
+            "metrics": metrics,
             "per_category": cat_summary,
         }
 
@@ -278,11 +297,13 @@ class BenchmarkRunner:
         }
         config_kwargs.update(self._mem_config_overrides)
         config = SpatioTemporalMemoryConfig(**config_kwargs)
+        replay_time = [0.0]
         mem = mem_cls(
             db_path=db_path,
             config=config,
             embedding_provider=self._embedder,
             llm_client=self._llm,
+            get_current_time=lambda: replay_time[0],
         )
 
         sr = SampleResult(sample_id=sample.sample_id, scene_id=sample.scene_id)
@@ -311,6 +332,7 @@ class BenchmarkRunner:
                         timestamp=frame.timestamp,
                         layer_name=layer,
                     )
+                replay_time[0] = max(replay_time[0], frame.timestamp)
                 sr.n_observations += 1
 
             mem.end_episode(consolidate=self._ablation.use_consolidation)
@@ -363,7 +385,10 @@ class BenchmarkRunner:
 
         answer = _clean_answer(result.answer)
 
-        scores = self._scorer.score(bq.question, answer, bq.answer)
+        if hasattr(self._scorer, 'score_with_category'):
+            scores = self._scorer.score_with_category(bq.question, answer, bq.answer, bq.category)
+        else:
+            scores = self._scorer.score(bq.question, answer, bq.answer)
 
         return QuestionResult(
             question_id=bq.question_id,
@@ -373,6 +398,7 @@ class BenchmarkRunner:
             category=bq.category,
             scores=scores,
             tools_used=result.tools_used,
+            tools_expected=bq.tools_expected,
             latency_s=latency,
         )
 

@@ -23,6 +23,7 @@ class BenchmarkQuestion:
     answer: str
     category: str = ""
     extra_answers: List[str] = field(default_factory=list)
+    tools_expected: List[str] = field(default_factory=list)
 
 
 @dataclass
