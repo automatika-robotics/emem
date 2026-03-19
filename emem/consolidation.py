@@ -270,6 +270,10 @@ class ConsolidationEngine:
                 existing.coordinates = centroid
                 existing.last_seen = max(existing.last_seen, max(timestamps))
                 existing.first_seen = min(existing.first_seen, min(timestamps))
+                # TODO: observation_count uses len(observations) which is the full
+                # consolidation batch size, not per-entity sighting count. Every
+                # entity extracted from a batch gets the same count. Fix requires
+                # per-observation entity extraction or post-hoc edge counting.
                 existing.observation_count += len(observations)
                 existing.confidence = max(existing.confidence, conf)
                 if entity_type and not existing.entity_type:
