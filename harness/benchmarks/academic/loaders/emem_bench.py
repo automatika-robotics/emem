@@ -132,7 +132,8 @@ class EMEMBenchLoader:
         and timestamps.
 
         Interoception data is also converted to frames with
-        ``layer_name="interoception:<key>"``.
+        ``is_interoception=True`` and ``layer_name`` set to the key
+        (e.g. ``"battery"``, ``"cpu_temp"``).
 
         :param entry: Sample dict with ``"trajectory"`` and optional
             ``"interoception"`` keys.
@@ -193,7 +194,8 @@ class EMEMBenchLoader:
                     position=closest_pos,
                     timestamp=ts,
                     text=str(value),
-                    layer_name=f"interoception:{key}",
+                    layer_name=key,
+                    is_interoception=True,
                 ))
 
         return frames

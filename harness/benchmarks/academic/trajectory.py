@@ -12,6 +12,7 @@ class TrajectoryFrame:
     text: str
     layer_name: str = "description"
     image_path: Optional[str] = None
+    is_interoception: bool = False
 
 
 @dataclass

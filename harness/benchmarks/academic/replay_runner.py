@@ -313,7 +313,7 @@ class BenchmarkRunner:
             mem.start_episode(sample.scene_id)
 
             for frame in sample.trajectory:
-                is_interoception = frame.layer_name.startswith("interoception:")
+                is_interoception = frame.is_interoception
                 layer = frame.layer_name
                 if not self._ablation.use_multi_layer and not is_interoception:
                     layer = "default"
@@ -336,7 +336,7 @@ class BenchmarkRunner:
                 sr.n_observations += 1
 
             n_intero = sum(1 for f in sample.trajectory
-                          if f.layer_name.startswith("interoception:"))
+                          if f.is_interoception)
             log.info(
                 "  ingested %d frames (%d interoception)",
                 sr.n_observations, n_intero,

@@ -180,9 +180,9 @@ class TestEMEMBenchLoader:
         samples = list(loader.load())
         s = samples[0]
 
-        intero_frames = [f for f in s.trajectory if f.layer_name.startswith("interoception:")]
+        intero_frames = [f for f in s.trajectory if f.is_interoception]
         assert len(intero_frames) == 4  # 2 entries * 2 keys (battery, cpu_temp)
-        battery_frames = [f for f in intero_frames if "battery" in f.layer_name]
+        battery_frames = [f for f in intero_frames if f.layer_name == "battery"]
         assert len(battery_frames) == 2
         assert "battery: 95%" in battery_frames[0].text
 
