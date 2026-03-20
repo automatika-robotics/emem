@@ -530,8 +530,20 @@ class MemoryTools:
         :returns: Formatted body status string.
         :rtype: str
         """
+        import logging as _logging
+        _logging.getLogger("emem.tools").debug(
+            "body_status called with layers=%r", layers,
+        )
         latest = self.store.get_latest_by_source_type("interoception", layers)
         if not latest:
+            # Debug: check if data exists at all
+            all_intero = self.store._db.execute(
+                "SELECT COUNT(*) FROM observations WHERE source_type = 'interoception'"
+            ).fetchone()[0]
+            _logging.getLogger("emem.tools").warning(
+                "body_status returned empty (layers=%r), but DB has %d interoception rows",
+                layers, all_intero,
+            )
             return "No body state data available."
 
         now = self._get_time()
