@@ -335,6 +335,13 @@ class BenchmarkRunner:
                 replay_time[0] = max(replay_time[0], frame.timestamp)
                 sr.n_observations += 1
 
+            n_intero = sum(1 for f in sample.trajectory
+                          if f.layer_name.startswith("interoception:"))
+            log.info(
+                "  ingested %d frames (%d interoception)",
+                sr.n_observations, n_intero,
+            )
+
             mem.end_episode(consolidate=self._ablation.use_consolidation)
             sr.ingestion_time_s = time.monotonic() - t_ingest
 

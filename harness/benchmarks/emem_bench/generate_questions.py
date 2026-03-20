@@ -296,14 +296,21 @@ def _spatial_questions(
             "tools_expected": ["locate", "semantic_search"],
         })
 
-    # "What objects are near (x, y)?" — use detections layer
-    if trajectory:
+    # "What objects are near (x, y)?" — use scene graph objects
+    if trajectory and objects:
         for _ in range(min(4, len(trajectory))):
             wp = random.choice(trajectory)
             pos = wp.get("position", [0, 0, 0])
-            nearby = _detections_near(trajectory, pos[0], pos[1], radius=2.0)
+            nearby = [
+                o for o in objects
+                if math.sqrt((o.get("position", [0, 0, 0])[0] - pos[0]) ** 2
+                             + (o.get("position", [0, 0, 0])[1] - pos[1]) ** 2)
+                <= 2.0
+            ]
             if nearby:
-                obj_names = ", ".join(nearby[:5])
+                obj_names = ", ".join(
+                    _format_object_name(o["objectType"]) for o in nearby[:5]
+                )
                 questions.append({
                     "question": (
                         f"What objects are near "
