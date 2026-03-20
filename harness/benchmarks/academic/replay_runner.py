@@ -345,6 +345,12 @@ class BenchmarkRunner:
             mem.end_episode(consolidate=self._ablation.use_consolidation)
             sr.ingestion_time_s = time.monotonic() - t_ingest
 
+            # Debug: check interoception data survived consolidation
+            _st_counts = mem._store._db.execute(
+                "SELECT source_type, COUNT(*) FROM observations GROUP BY source_type"
+            ).fetchall()
+            log.info("  source_type counts after consolidation: %s", dict(_st_counts))
+
             if sample.agent_position is not None:
                 mem.add(
                     text=f"Agent is currently here. {sample.agent_situation}",
