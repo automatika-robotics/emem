@@ -65,7 +65,7 @@ def main():
 
         print("\n=== Available Tools ===")
         for td in mem.get_tool_definitions():
-            print(f"  - {td['name']}: {td['description']}")
+            print(f"  - {td['function']['name']}: {td['function']['description']}")
 
     print(f"\nDone. Files in: {tmp}")
 

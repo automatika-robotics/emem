@@ -259,10 +259,13 @@ class TestDispatch:
 
 
 class TestToolDefinitions:
-    def test_returns_nine_tools(self, tools):
+    def test_returns_ten_tools_in_openai_format(self, tools):
         defs = tools.get_tool_definitions()
         assert len(defs) == 10
-        names = {d["name"] for d in defs}
+        for d in defs:
+            assert d["type"] == "function"
+            assert "name" in d["function"]
+        names = {d["function"]["name"] for d in defs}
         assert names == {
             "semantic_search", "spatial_query", "temporal_query",
             "episode_summary", "get_current_context", "search_gists",

@@ -1,6 +1,6 @@
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -346,6 +346,26 @@ class SpatioTemporalMemory:
         """
         self._ensure_flushed()
         return self._tools.dispatch_tool_call(tool_name, arguments)
+
+    def get_tools_for_registration(self) -> List[Tuple[Callable, Dict]]:
+        """Return ``(callable, description)`` pairs for external tool registration.
+
+        Each callable wraps :meth:`dispatch_tool_call` for a single tool.
+        Compatible with EmbodiedAgents ``LLM.register_tool()``.
+
+        :returns: List of (function, OpenAI tool description) tuples.
+        :rtype: List[Tuple[Callable, Dict]]
+        """
+        def _make_fn(tool_name: str) -> Callable:
+            def fn(**kwargs: Any) -> str:
+                return self.dispatch_tool_call(tool_name, kwargs)
+            fn.__name__ = tool_name
+            return fn
+
+        return [
+            (_make_fn(td["function"]["name"]), td)
+            for td in self.get_tool_definitions()
+        ]
 
     # ── Programmatic access ───────────────────────────────────────
 

@@ -26,7 +26,7 @@ class AblationConfig:
         :returns: Filtered list.
         """
         allowed = set(self.available_tools)
-        return [t for t in tool_defs if t["name"] in allowed]
+        return [t for t in tool_defs if t.get("function", t)["name"] in allowed]
 
 
 ABLATIONS: Dict[str, AblationConfig] = {

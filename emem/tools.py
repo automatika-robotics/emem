@@ -549,11 +549,18 @@ class MemoryTools:
         return "\n".join(lines)
 
     def get_tool_definitions(self) -> List[Dict[str, Any]]:
-        """Return tool definitions suitable for LLM function calling.
+        """Return tool definitions in OpenAI function-calling format.
 
-        :returns: List of tool definition dicts in OpenAI function-calling format.
+        Each entry has the shape
+        ``{"type": "function", "function": {"name", "description", "parameters"}}``.
+
+        :returns: List of tool definition dicts.
         :rtype: List[Dict[str, Any]]
         """
+        return [{"type": "function", "function": d} for d in self._tool_schemas()]
+
+    def _tool_schemas(self) -> List[Dict[str, Any]]:
+        """Raw tool schemas (name/description/parameters only)."""
         return [
             {
                 "name": "semantic_search",

@@ -48,10 +48,11 @@ def format_tool_definitions(tool_definitions: list[dict[str, Any]]) -> str:
     """
     parts: list[str] = []
     for tool in tool_definitions:
-        name = tool["name"]
-        desc = tool["description"]
-        params = tool.get("parameters", {}).get("properties", {})
-        required = set(tool.get("parameters", {}).get("required", []))
+        fn = tool.get("function", tool)
+        name = fn["name"]
+        desc = fn["description"]
+        params = fn.get("parameters", {}).get("properties", {})
+        required = set(fn.get("parameters", {}).get("required", []))
 
         param_lines: list[str] = []
         for pname, pschema in params.items():

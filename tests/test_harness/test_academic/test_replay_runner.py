@@ -222,8 +222,8 @@ class TestAblatedMemory:
         class MockMem:
             def get_tool_definitions(self):
                 return [
-                    {"name": "semantic_search", "description": "s"},
-                    {"name": "locate", "description": "l"},
+                    {"type": "function", "function": {"name": "semantic_search", "description": "s"}},
+                    {"type": "function", "function": {"name": "locate", "description": "l"}},
                 ]
             def dispatch_tool_call(self, name, args):
                 return f"called {name}"
@@ -233,7 +233,7 @@ class TestAblatedMemory:
 
         defs = wrapped.get_tool_definitions()
         assert len(defs) == 1
-        assert defs[0]["name"] == "semantic_search"
+        assert defs[0]["function"]["name"] == "semantic_search"
 
         assert "not available" in wrapped.dispatch_tool_call("locate", {})
         assert wrapped.dispatch_tool_call("semantic_search", {}) == "called semantic_search"
