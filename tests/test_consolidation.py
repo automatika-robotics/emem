@@ -177,29 +177,6 @@ class TestCrossLayerSynthesis:
         assert "saw table" in gist.text
         assert gist.layer_name == "vlm"
 
-    def test_fallback_without_synthesize(self, store):
-        class SummarizeOnly:
-            def summarize(self, texts):
-                return " | ".join(texts)
-
-        config = SpatioTemporalMemoryConfig(
-            consolidation_window=100.0,
-            consolidation_min_samples=2,
-        )
-        engine = ConsolidationEngine(store=store, config=config, llm_client=SummarizeOnly())
-
-        ep_id = store.start_episode("test", 1000.0)
-        store.add_observation(self._obs_with_layer("white cabinets", "vlm", ts=1001.0, episode_id=ep_id))
-        store.add_observation(self._obs_with_layer("chair", "detections", ts=1002.0, episode_id=ep_id))
-        store.end_episode(ep_id, 1003.0)
-
-        gist_ids = engine.consolidate_episode(ep_id)
-        gist = store.get_gist(gist_ids[0])
-        # Without synthesize, should fall back to summarize
-        assert "[vlm]" not in gist.text
-        assert "white cabinets" in gist.text
-        assert "chair" in gist.text
-
 
 class FakeEntityExtractor:
     """Summarizer that also implements extract_entities."""
@@ -255,8 +232,8 @@ class TestEntityExtraction:
         cooccurring = store.get_cooccurring_entities(chair_ent.id)
         assert len(cooccurring) >= 1
 
-    def test_no_extraction_without_method(self, store, engine):
-        """When LLMClient lacks extract_entities, no entities are created."""
+    def test_no_extraction_with_fallback_summarizer(self, store, engine):
+        """ConcatenationSummarizer returns no entities."""
         ep_id = store.start_episode("test", 1000.0)
         store.add_observation(_obs("saw a chair", x=5.0, y=5.0, ts=1001.0, episode_id=ep_id))
         store.end_episode(ep_id, 1003.0)
@@ -476,8 +453,8 @@ class TestEarlyEntityExtraction:
 
         mem.close()
 
-    def test_graceful_no_extractor(self, tmp_path):
-        """Without extract_entities on LLM client, flush works normally."""
+    def test_graceful_fallback_summarizer(self, tmp_path):
+        """ConcatenationSummarizer produces no entities, flush works normally."""
         from emem import SpatioTemporalMemory
 
         config = SpatioTemporalMemoryConfig(
@@ -486,7 +463,6 @@ class TestEarlyEntityExtraction:
             embedding_dim=32,
             flush_batch_size=2,
         )
-        # Default ConcatenationSummarizer has no extract_entities
         mem = SpatioTemporalMemory(config=config)
 
         ep_id = mem.start_episode("test")

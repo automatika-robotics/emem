@@ -1,5 +1,7 @@
+import json
+import re
 import time
-from typing import Dict, List, Optional, Protocol
+from typing import Any, Callable, Dict, List, Optional, Protocol
 
 import numpy as np
 
@@ -18,6 +20,132 @@ class LLMClient(Protocol):
         """
         ...
 
+    def synthesize(self, layer_texts: Dict[str, List[str]]) -> str:
+        """Synthesize observations grouped by perception layer into a
+        structured summary.
+
+        :param layer_texts: Mapping of layer name to observation texts.
+        :returns: Cross-layer summary.
+        :rtype: str
+        """
+        ...
+
+    def extract_entities(self, texts: List[str]) -> List[Dict[str, Any]]:
+        """Extract named entities from observation texts.
+
+        :param texts: Observation texts.
+        :returns: List of dicts with keys ``name``, ``entity_type``, ``confidence``.
+        :rtype: List[Dict[str, Any]]
+        """
+        ...
+
+
+def _parse_entities(raw: str) -> List[Dict[str, Any]]:
+    """Parse a JSON entity array from LLM output.
+
+    Extracts the first ``[...]`` block from *raw* and returns a list of
+    entity dicts with keys ``name``, ``entity_type``, ``confidence``.
+    """
+    match = re.search(r"\[.*\]", raw, re.DOTALL)
+    if not match:
+        return []
+    try:
+        entities = json.loads(match.group())
+    except json.JSONDecodeError:
+        return []
+    return [
+        {
+            "name": str(e["name"]),
+            "entity_type": e.get("entity_type"),
+            "confidence": float(e.get("confidence", 1.0)),
+        }
+        for e in entities
+        if isinstance(e, dict) and "name" in e
+    ]
+
+
+class InferenceLLMClient:
+    """Wraps a model inference function into an :class:`LLMClient`.
+
+    The function should accept a dict with at least::
+
+        {"query": List[Dict], "temperature": float,
+         "max_new_tokens": int, "stream": bool}
+
+    and return a mapping with an ``"output"`` key containing the model's
+    text response.  This matches the ``ModelClient.inference()`` interface
+    in EmbodiedAgents.
+
+    Provides ``summarize``, ``synthesize``, and ``extract_entities`` using
+    the same prompts as the eMEM evaluation harness.
+
+    Example::
+
+        from emem.consolidation import InferenceLLMClient
+
+        llm_client = InferenceLLMClient(ollama_client.inference)
+        mem = SpatioTemporalMemory(llm_client=llm_client)
+
+    :param inference_fn: Model inference callable.
+    :param temperature: Sampling temperature for consolidation calls.
+    :param max_new_tokens: Maximum tokens for consolidation calls.
+    """
+
+    def __init__(
+        self,
+        inference_fn: Callable,
+        temperature: float = 0.3,
+        max_new_tokens: int = 500,
+    ):
+        self._fn = inference_fn
+        self._temperature = temperature
+        self._max_new_tokens = max_new_tokens
+
+    def _chat(self, prompt: str) -> str:
+        result = self._fn({
+            "query": [{"role": "user", "content": prompt}],
+            "temperature": self._temperature,
+            "max_new_tokens": self._max_new_tokens,
+            "stream": False,
+        })
+        if result and result.get("output"):
+            text = result["output"]
+            return re.sub(
+                r"<think>.*?</think>", "", text, flags=re.DOTALL
+            ).strip()
+        return ""
+
+    def summarize(self, texts: List[str]) -> str:
+        """Summarize observations into a concise paragraph."""
+        numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
+        return self._chat(
+            "Summarize the following observations into a concise paragraph. "
+            "Preserve spatial and temporal details.\n\n" + numbered
+        )
+
+    def synthesize(self, layer_texts: Dict[str, List[str]]) -> str:
+        """Synthesize observations grouped by perception layer."""
+        block = "\n".join(
+            f"[{layer}]: {'; '.join(texts)}"
+            for layer, texts in layer_texts.items()
+        )
+        return self._chat(
+            "Synthesize the following observations grouped by perception layer "
+            "into a coherent summary. Highlight agreements and "
+            "contradictions.\n\n" + block
+        )
+
+    def extract_entities(self, texts: List[str]) -> List[Dict[str, Any]]:
+        """Extract named entities from observations."""
+        numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
+        raw = self._chat(
+            "Extract named entities (objects, places, people) from these "
+            "observations. Return ONLY a JSON array where each element has "
+            'keys: "name" (string), "entity_type" (string or null), '
+            '"confidence" (float 0-1).\n\n' + numbered
+        )
+        return _parse_entities(raw)
+
 
 class ConcatenationSummarizer:
     """Fallback summarizer that joins texts with ``|``."""
@@ -26,11 +154,13 @@ class ConcatenationSummarizer:
         return " | ".join(texts)
 
     def synthesize(self, layer_texts: Dict[str, List[str]]) -> str:
-        """Synthesize texts grouped by layer into a structured summary."""
         parts = []
         for layer_name in sorted(layer_texts.keys()):
             parts.append(f"[{layer_name}] {' | '.join(layer_texts[layer_name])}")
         return " || ".join(parts)
+
+    def extract_entities(self, texts: List[str]) -> List[Dict[str, Any]]:
+        return []
 
 
 def _common_layer(observations: List[ObservationNode], default: Optional[str] = None) -> Optional[str]:
@@ -194,7 +324,7 @@ class ConsolidationEngine:
         layer_name = _common_layer(observations)
         is_multi_layer = layer_name is None and len(observations) > 0
 
-        if is_multi_layer and hasattr(self._summarizer, "synthesize"):
+        if is_multi_layer:
             layer_texts: Dict[str, List[str]] = {}
             for obs in observations:
                 if obs.text:
@@ -236,9 +366,6 @@ class ConsolidationEngine:
         return entity_ids
 
     def _extract_and_merge_entities(self, observations: List[ObservationNode]) -> List[str]:
-        if not hasattr(self._summarizer, "extract_entities"):
-            return []
-
         # Filter to only unprocessed observations
         unprocessed_ids = self.store.get_unextracted_obs_ids([obs.id for obs in observations])
         observations = [obs for obs in observations if obs.id in unprocessed_ids]

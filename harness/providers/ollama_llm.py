@@ -1,7 +1,6 @@
-import json
-import re
 from typing import Any
 
+from emem.consolidation import _parse_entities
 from harness.providers.http import post_json, strip_think_tags
 from harness.providers.ollama_vlm import _is_thinking_model
 
@@ -69,20 +68,3 @@ class OllamaLLMClient:
         return strip_think_tags(data["message"]["content"])
 
 
-def _parse_entities(raw: str) -> list[dict[str, Any]]:
-    match = re.search(r"\[.*\]", raw, re.DOTALL)
-    if not match:
-        return []
-    try:
-        entities = json.loads(match.group())
-    except json.JSONDecodeError:
-        return []
-    return [
-        {
-            "name": str(e["name"]),
-            "entity_type": e.get("entity_type"),
-            "confidence": float(e.get("confidence") or 1.0),
-        }
-        for e in entities
-        if isinstance(e, dict) and "name" in e
-    ]

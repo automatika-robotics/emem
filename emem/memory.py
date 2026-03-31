@@ -66,8 +66,6 @@ class SpatioTemporalMemory:
         )
 
     def _on_observations_flushed(self, observations: List[ObservationNode]) -> None:
-        if not hasattr(self._consolidation._summarizer, "extract_entities"):
-            return
         self._entity_buffer.extend(observations)
         self._entity_flush_count += 1
         now = time.time()

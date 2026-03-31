@@ -1,8 +1,7 @@
-import json
 import os
-import re
 from typing import Any
 
+from emem.consolidation import _parse_entities
 from harness.providers.http import post_json_with_retry, strip_think_tags
 
 _BASE = "https://generativelanguage.googleapis.com/v1beta"
@@ -98,20 +97,3 @@ def _extract_text(data: dict) -> str:
     return strip_think_tags(text)
 
 
-def _parse_entities(raw: str) -> list[dict[str, Any]]:
-    match = re.search(r"\[.*\]", raw, re.DOTALL)
-    if not match:
-        return []
-    try:
-        entities = json.loads(match.group())
-    except json.JSONDecodeError:
-        return []
-    return [
-        {
-            "name": str(e["name"]),
-            "entity_type": e.get("entity_type"),
-            "confidence": float(e.get("confidence", 1.0)),
-        }
-        for e in entities
-        if isinstance(e, dict) and "name" in e
-    ]
