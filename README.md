@@ -1,17 +1,25 @@
-<p align="center">
-   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="_static/eMEM_dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="_static/eMEM_light.png">
-    <img alt="EMOS" src="docs/_static/Emos_light.png" width="50%">
-  </picture>
-  <p align="center">
-    <strong>Embodied Memory for Situated Agents</strong>
-  </p>
-  <p align="center">
-    A hybrid graph-based spatio-temporal memory system that gives embodied agents<br>
-    the ability to remember <em>what</em> they observed, <em>where</em> they observed it, and <em>when</em>.
-  </p>
-</p>
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/_static/eMEM_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/_static/eMEM_light.png">
+  <img alt="eMEM Logo" src="docs/_static/eMEM_dark.png" width="600">
+</picture>
+
+<br/>
+
+Part of the [EMOS](https://github.com/automatika-robotics/emos) ecosystem
+
+[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?logo=discord&logoColor=white)](https://discord.gg/B9ZU6qjzND)
+
+**Embodied Memory for Situated Agents**
+
+A hybrid graph-based spatio-temporal memory system that gives embodied agents the ability to remember *what* they observed, *where* they observed it, and *when*.
+
+[**EMOS Documentation**](https://emos.automatikarobotics.com) | [**Discord**](https://discord.gg/B9ZU6qjzND)
+
+</div>
 
 <p align="center">
   <a href="#installation">Installation</a> &middot;
@@ -25,6 +33,8 @@
 ---
 
 ## Why eMEM?
+
+**eMEM** is the memory layer of the [EMOS](https://github.com/automatika-robotics/emos) (Embodied Operating System) ecosystem. It gives Physical AI agents a persistent, queryable sense of place and history — so they don't just react to the current frame, but **remember**, **recall**, and **reason** over everything they've observed.
 
 Mobile robots and embodied AI agents accumulate thousands of observations per session -- object detections, scene descriptions, sensor readings -- but existing memory systems force a choice: **vector databases** that discard spatial structure, or **metric maps** that discard semantics. eMEM unifies both.
 
@@ -454,8 +464,8 @@ The `harness/benchmarks/academic/` module provides replay-based evaluation on es
 
 | Benchmark | Venue | Questions | Focus | Scorer |
 |-----------|-------|-----------|-------|--------|
-| **SQA3D** | ICLR 2023 | 33.4k situated QA | Spatial reasoning | Exact Match |
-| **LoCoMo** | ACL 2024 | 1,986 conversational QA | Temporal reasoning | Token F1 + BLEU-1 |
+| **LoCoMo** | ACL 2024 | 1,986 conversational QA | Temporal reasoning, multi-hop recall | Token F1 + BLEU-1 |
+| **eMEM-Bench** (ours) | — | 492 embodied QA across 12 AI2-THOR scenes | Spatial, temporal, entity, episodic, interoceptive recall | LLM judge (1-5) |
 
 ### Ablation Study
 
@@ -472,21 +482,21 @@ Five configurations isolate the contribution of each eMEM component:
 ### Running Benchmarks
 
 ```bash
-# SQA3D (needs ScanNet annotations in data_dir)
-python -m harness.run_benchmark \
-  --dataset sqa3d --data-dir ./data/sqa3d \
-  --max-samples 50 --ablation full
-
-# LoCoMo (text-only, no spatial data)
+# LoCoMo (text-only conversational memory)
 python -m harness.run_benchmark \
   --dataset locomo --data-dir ./data/locomo \
   --max-samples 3 --ablation full
 
+# eMEM-Bench (embodied QA over AI2-THOR scenes)
+python -m harness.run_benchmark \
+  --dataset emem_bench --data-dir ./data/emem_bench \
+  --ablation full
+
 # Full ablation sweep with JSON output
 python -m harness.run_benchmark \
-  --dataset sqa3d --data-dir ./data/sqa3d \
+  --dataset locomo --data-dir ./data/locomo \
   --ablation full,vector_only,no_spatial,no_consolidation,flat_layer \
-  --json > results/sqa3d_ablation.json
+  --json > results/locomo_ablation.json
 
 # Use Gemini provider instead of Ollama
 python -m harness.run_benchmark \
@@ -498,7 +508,7 @@ python -m harness.run_benchmark \
 ### CLI Options
 
 ```
---dataset         sqa3d | locomo
+--dataset         locomo | emem_bench
 --data-dir        Path to dataset directory
 --ablation        Comma-separated ablation names (default: full)
 --max-samples     Limit number of samples evaluated
@@ -511,19 +521,17 @@ python -m harness.run_benchmark \
 
 ### Data Directory Layouts
 
-**SQA3D:**
-```
-data/sqa3d/
-  sqa_task/balanced/v1_balanced_questions_val_scannetv2.json
-  sqa_task/balanced/v1_balanced_sqa_annotations_val_scannetv2.json
-  scannet/{scene_id}/{scene_id}_aligned_bbox.npy
-  scannetv2-labels.combined.tsv
-```
-
 **LoCoMo:**
 ```
 data/locomo/
   locomo.json   # array of conversations with sessions + qa_pairs
+```
+
+**eMEM-Bench:**
+```
+data/emem_bench/
+  scenes/{scene_id}/trajectory.json
+  scenes/{scene_id}/questions.json
 ```
 
 ## Development
@@ -535,6 +543,22 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pytest tests/ -v
 ```
+
+## Part of the EMOS Ecosystem
+
+eMEM is the memory layer of [EMOS](https://github.com/automatika-robotics/emos) (Embodied Operating System) — the unified orchestration layer for Physical AI. Alongside its sibling components:
+
+- **[EmbodiedAgents](https://github.com/automatika-robotics/embodied-agents)** — Intelligence and manipulation. ML model graphs with semantic routing and adaptive reconfiguration.
+- **[Kompass](https://github.com/automatika-robotics/kompass)** — Navigation. GPU-accelerated planning and control.
+- **[Sugarcoat](https://github.com/automatika-robotics/sugarcoat)** — Lifecycle management. Event-driven system design for ROS 2.
+- **eMEM** — Memory. Spatio-temporal recall for situated agents.
+
+Write a recipe once. Deploy it on any robot. No code changes.
+
+## Resources
+
+- [EMOS Documentation](https://emos.automatikarobotics.com) — Tutorials, recipes, and usage guides
+- [Discord](https://discord.gg/B9ZU6qjzND) — Community and support
 
 ## License
 
