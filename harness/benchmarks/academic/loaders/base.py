@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Iterator, Protocol
 
 from harness.benchmarks.academic.trajectory import BenchmarkSample

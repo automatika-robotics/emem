@@ -12,6 +12,8 @@ Usage::
         --output data/emem-bench/ai2thor/
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import logging

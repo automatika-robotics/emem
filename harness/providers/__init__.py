@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from harness.providers.gemini_embeddings import GeminiEmbeddingProvider
 from harness.providers.gemini_llm import GeminiLLMClient
 from harness.providers.gemini_vlm import GeminiVLM

@@ -6,6 +6,8 @@ paraphrases them ("Your battery level is 85%"), so the LLM judge is
 needed to match the value correctly.
 """
 
+from __future__ import annotations
+
 from typing import Any, Callable, Dict
 
 from harness.benchmarks.academic.scorers.llm_match import LLMMatchScorer

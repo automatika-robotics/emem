@@ -10,6 +10,8 @@ Usage::
         --output data/emem-bench/emem-bench-v0.json
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import logging

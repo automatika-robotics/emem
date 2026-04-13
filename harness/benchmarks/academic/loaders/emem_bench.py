@@ -4,6 +4,8 @@ Loads multi-layer trajectory data with interoception and tool-expected
 annotations from the eMEM-Bench JSON format.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
