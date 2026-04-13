@@ -3,7 +3,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/_static/eMEM_dark.png">
   <source media="(prefers-color-scheme: light)" srcset="docs/_static/eMEM_light.png">
-  <img alt="eMEM Logo" src="docs/_static/eMEM_dark.png" width="500">
+  <img alt="eMEM Logo" src="docs/_static/eMEM_dark.png" width="50%">
 </picture>
 
 <br/>
