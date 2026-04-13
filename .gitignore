@@ -36,3 +36,6 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Technical report (not tracked)
+TECHNICAL_REPORT.md
