@@ -29,7 +29,9 @@ class WorkingMemory:
         self._on_flush = on_flush
 
         self._buffer: Deque[ObservationNode] = deque()
-        self._recent: Deque[ObservationNode] = deque(maxlen=self.config.working_memory_size)
+        self._recent: Deque[ObservationNode] = deque(
+            maxlen=self.config.working_memory_size
+        )
         self._lock = threading.Lock()
 
         self.current_position: Optional[np.ndarray] = None
@@ -56,6 +58,7 @@ class WorkingMemory:
             self.flush()
 
     def _should_flush(self) -> bool:
+        """Return ``True`` when buffer size or time interval triggers a flush."""
         if len(self._buffer) >= self.config.flush_batch_size:
             return True
         if time.time() - self._last_flush_time >= self.config.flush_interval:
@@ -102,6 +105,7 @@ class WorkingMemory:
         metadata: Optional[Dict[str, Any]] = None,
         parent_episode_id: Optional[str] = None,
     ) -> str:
+        """Begin a new episode and mark it as the active episode."""
         ts = time.time()
         episode_id = self.store.start_episode(name, ts, metadata, parent_episode_id)
         self.active_episode_id = episode_id
@@ -112,6 +116,7 @@ class WorkingMemory:
         gist: str = "",
         gist_embedding: Optional[np.ndarray] = None,
     ) -> Optional[str]:
+        """Flush pending observations and close the active episode."""
         if not self.active_episode_id:
             return None
         self.flush()
@@ -122,8 +127,10 @@ class WorkingMemory:
 
     @property
     def buffer_size(self) -> int:
+        """Number of observations currently awaiting flush."""
         return len(self._buffer)
 
     @property
     def recent_count(self) -> int:
+        """Number of observations retained in the recent buffer."""
         return len(self._recent)

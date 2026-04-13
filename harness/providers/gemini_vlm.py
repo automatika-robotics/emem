@@ -33,5 +33,8 @@ class GeminiVLM:
         """
         b64 = encode_image_b64(image)
         return self._client.describe(
-            b64, prompt, mime_type="image/png", max_tokens=max_tokens,
+            b64,
+            prompt,
+            mime_type="image/png",
+            max_tokens=max_tokens,
         )

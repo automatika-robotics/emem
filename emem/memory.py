@@ -50,13 +50,16 @@ class SpatioTemporalMemory:
 
         self._store = MemoryStore(config=config, embedding_provider=embedding_provider)
         self._consolidation = ConsolidationEngine(
-            store=self._store, config=config, llm_client=llm_client,
+            store=self._store,
+            config=config,
+            llm_client=llm_client,
         )
         self._entity_buffer: List[ObservationNode] = []
         self._entity_flush_count = 0
         self._entity_last_extract_time = time.time()
         self._wm = WorkingMemory(
-            store=self._store, config=config,
+            store=self._store,
+            config=config,
             on_flush=self._on_observations_flushed,
         )
         self._tools = MemoryTools(
@@ -66,15 +69,19 @@ class SpatioTemporalMemory:
         )
 
     def _on_observations_flushed(self, observations: List[ObservationNode]) -> None:
+        """Buffer flushed observations and trigger entity extraction when due."""
         self._entity_buffer.extend(observations)
         self._entity_flush_count += 1
         now = time.time()
         elapsed = now - self._entity_last_extract_time
-        if (self._entity_flush_count >= self._config.entity_extract_flush_interval
-                or elapsed >= self._config.entity_extract_time_interval):
+        if (
+            self._entity_flush_count >= self._config.entity_extract_flush_interval
+            or elapsed >= self._config.entity_extract_time_interval
+        ):
             self._drain_entity_buffer()
 
     def _drain_entity_buffer(self) -> None:
+        """Run entity extraction over buffered observations and reset counters."""
         if not self._entity_buffer:
             return
         batch = self._entity_buffer[:]
@@ -228,35 +235,43 @@ class SpatioTemporalMemory:
 
     @property
     def active_episode_id(self) -> Optional[str]:
+        """Identifier of the currently active episode, if any."""
         return self._wm.active_episode_id
 
     # ── Queries (LLM tool interface) ──────────────────────────────
 
     def _ensure_flushed(self) -> None:
+        """Flush buffered observations so queries observe the latest state."""
         if self._wm.buffer_size > 0:
             self._wm.flush()
 
     def semantic_search(self, query: str, **kwargs: Any) -> str:
+        """Run a semantic search against the store and return formatted results."""
         self._ensure_flushed()
         return self._tools.semantic_search(query=query, **kwargs)
 
     def spatial_query(self, x: float, y: float, **kwargs: Any) -> str:
+        """Run a spatial radius query around ``(x, y)``."""
         self._ensure_flushed()
         return self._tools.spatial_query(x=x, y=y, **kwargs)
 
     def temporal_query(self, **kwargs: Any) -> str:
+        """Query observations within a time range."""
         self._ensure_flushed()
         return self._tools.temporal_query(**kwargs)
 
     def episode_summary(self, **kwargs: Any) -> str:
+        """Return formatted summaries for recent episodes."""
         self._ensure_flushed()
         return self._tools.episode_summary(**kwargs)
 
     def get_current_context(self, **kwargs: Any) -> str:
+        """Return the current spatial/temporal context for the agent."""
         self._ensure_flushed()
         return self._tools.get_current_context(**kwargs)
 
     def search_gists(self, query: str, **kwargs: Any) -> str:
+        """Search consolidated gists for *query*."""
         self._ensure_flushed()
         return self._tools.search_gists(query=query, **kwargs)
 
@@ -272,6 +287,7 @@ class SpatioTemporalMemory:
         layer_name: str = "default",
         metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
+        """Insert a named entity at ``(x, y, z)`` and return its id."""
         ts = timestamp or self._get_time()
         entity = EntityNode(
             name=name,
@@ -286,18 +302,22 @@ class SpatioTemporalMemory:
         return self._store.add_entity(entity)
 
     def entity_query(self, **kwargs: Any) -> str:
+        """Query stored entities by name, type, or location."""
         self._ensure_flushed()
         return self._tools.entity_query(**kwargs)
 
     def body_status(self, **kwargs: Any) -> str:
+        """Return the most recent interoception/body-state observations."""
         self._ensure_flushed()
         return self._tools.body_status(**kwargs)
 
     def locate(self, concept: str, **kwargs: Any) -> str:
+        """Locate the spatial position associated with *concept*."""
         self._ensure_flushed()
         return self._tools.locate(concept=concept, **kwargs)
 
     def recall(self, query: str, **kwargs: Any) -> str:
+        """Recall observations relevant to *query* using a hybrid search."""
         self._ensure_flushed()
         return self._tools.recall(query=query, **kwargs)
 
@@ -314,7 +334,9 @@ class SpatioTemporalMemory:
         :rtype: List[str]
         """
         self._ensure_flushed()
-        return self._consolidation.consolidate_time_window(reference_time=self._get_time())
+        return self._consolidation.consolidate_time_window(
+            reference_time=self._get_time()
+        )
 
     def maintenance(self) -> int:
         """Archive long-term observations that have aged past the threshold.
@@ -354,15 +376,19 @@ class SpatioTemporalMemory:
         :returns: List of (function, OpenAI tool description) tuples.
         :rtype: List[Tuple[Callable, Dict]]
         """
+
         def _make_fn(tool_name: str) -> Callable:
+            """Create a closure that dispatches *tool_name* with keyword args."""
+
             def fn(**kwargs: Any) -> str:
+                """Invoke the bound tool via :meth:`dispatch_tool_call`."""
                 return self.dispatch_tool_call(tool_name, kwargs)
+
             fn.__name__ = tool_name
             return fn
 
         return [
-            (_make_fn(td["function"]["name"]), td)
-            for td in self.get_tool_definitions()
+            (_make_fn(td["function"]["name"]), td) for td in self.get_tool_definitions()
         ]
 
     # ── Programmatic access ───────────────────────────────────────
@@ -374,6 +400,7 @@ class SpatioTemporalMemory:
 
     @property
     def current_position(self) -> Optional[np.ndarray]:
+        """Most recent agent position, or ``None`` if not yet known."""
         return self._wm.current_position
 
     def get_recent(self, n: Optional[int] = None) -> List[ObservationNode]:
@@ -388,17 +415,21 @@ class SpatioTemporalMemory:
     # ── Lifecycle ─────────────────────────────────────────────────
 
     def save(self) -> None:
+        """Flush buffers and persist all in-memory state to disk."""
         self._wm.flush()
         self._drain_entity_buffer()
         self._store.save()
 
     def close(self) -> None:
+        """Flush buffers and close the underlying store."""
         self._wm.flush()
         self._drain_entity_buffer()
         self._store.close()
 
     def __enter__(self):
+        """Return self for use as a context manager."""
         return self
 
     def __exit__(self, *_):
+        """Close the memory on context-manager exit."""
         self.close()

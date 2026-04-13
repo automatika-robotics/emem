@@ -29,6 +29,7 @@ def _parse_relative_time(value: str, reference_time: Optional[float] = None) -> 
 
 
 def _format_observation(obs: Any, include_coords: bool = True) -> str:
+    """Format a single observation as a one-line display string."""
     parts = [f"[{obs.layer_name}]"]
     if include_coords:
         c = obs.coordinates
@@ -40,6 +41,7 @@ def _format_observation(obs: Any, include_coords: bool = True) -> str:
 
 
 def _format_memory_result(item: Any, include_coords: bool = True) -> str:
+    """Format an entity, gist, or observation for display."""
     if isinstance(item, EntityNode):
         c = item.coordinates
         type_label = item.entity_type or "object"
@@ -59,6 +61,7 @@ def _format_memory_result(item: Any, include_coords: bool = True) -> str:
 
 
 def _format_observations(observations: list, include_coords: bool = True) -> str:
+    """Format a list of observations as a numbered string list."""
     if not observations:
         return "No observations found."
     lines = []
@@ -67,7 +70,9 @@ def _format_observations(observations: list, include_coords: bool = True) -> str
     return "\n".join(lines)
 
 
-def _format_observations_by_layer(observations: list, include_coords: bool = True) -> str:
+def _format_observations_by_layer(
+    observations: list, include_coords: bool = True
+) -> str:
     """Format observations grouped by layer_name."""
     if not observations:
         return "No observations found."
@@ -88,6 +93,7 @@ def _format_observations_by_layer(observations: list, include_coords: bool = Tru
 
 
 def _format_results(results: list, include_coords: bool = True) -> str:
+    """Format a heterogeneous result list as a numbered string list."""
     if not results:
         return "No results found."
     lines = []
@@ -104,9 +110,16 @@ class MemoryTools:
     """
 
     _TOOL_NAMES = frozenset({
-        "semantic_search", "spatial_query", "temporal_query",
-        "episode_summary", "get_current_context", "search_gists",
-        "entity_query", "locate", "recall", "body_status",
+        "semantic_search",
+        "spatial_query",
+        "temporal_query",
+        "episode_summary",
+        "get_current_context",
+        "search_gists",
+        "entity_query",
+        "locate",
+        "recall",
+        "body_status",
     })
 
     def __init__(
@@ -120,6 +133,7 @@ class MemoryTools:
         self._get_position = get_current_position
 
     def _resolve_time(self, value: Optional[str]) -> Optional[float]:
+        """Resolve a relative or absolute time string to a Unix timestamp."""
         if value is None:
             return None
         return _parse_relative_time(value, self._get_time())
@@ -129,6 +143,7 @@ class MemoryTools:
         time_after: Optional[str],
         time_before: Optional[str],
     ) -> Optional[Tuple[float, float]]:
+        """Resolve ``(time_after, time_before)`` strings into a numeric range."""
         after = self._resolve_time(time_after)
         before = self._resolve_time(time_before)
         if after is None and before is None:
@@ -149,6 +164,7 @@ class MemoryTools:
         spatial_radius: Optional[float] = None,
         episode_id: Optional[str] = None,
     ) -> str:
+        """Run a semantic similarity search over stored memories."""
         spatial_center = None
         if near_x is not None and near_y is not None:
             spatial_center = np.array([near_x, near_y, 0.0])
@@ -180,6 +196,7 @@ class MemoryTools:
         source_type: Optional[str] = None,
         exclude_source_type: Optional[str] = None,
     ) -> str:
+        """Return observations within *radius* of ``(x, y, z)``."""
         results = self.store.spatial_query(
             center=np.array([x, y, z]),
             radius=radius,
@@ -207,6 +224,7 @@ class MemoryTools:
         source_type: Optional[str] = None,
         exclude_source_type: Optional[str] = None,
     ) -> str:
+        """Return observations matching a temporal (and optional spatial) filter."""
         spatial_center = None
         if near_x is not None and near_y is not None:
             spatial_center = np.array([near_x, near_y, 0.0])
@@ -265,6 +283,7 @@ class MemoryTools:
         task_name: Optional[str] = None,
         last_n: int = 1,
     ) -> str:
+        """Return formatted summaries for one or more episodes."""
         if episode_id:
             ep = self.store.get_episode(episode_id)
             if not ep:
@@ -300,17 +319,22 @@ class MemoryTools:
         radius: float = 3.0,
         include_recent_minutes: float = 5.0,
     ) -> str:
+        """Summarize the agent's current spatial and temporal context."""
         parts = []
 
         pos = self._get_position() if self._get_position else None
         if pos is not None:
             parts.append(f"Position: ({pos[0]:.1f}, {pos[1]:.1f})")
             nearby = self.store.spatial_query(
-                center=pos, radius=radius, n_results=10,
+                center=pos,
+                radius=radius,
+                n_results=10,
             )
             if nearby:
                 parts.append(f"Nearby ({radius}m):")
-                parts.append(_format_observations_by_layer(nearby, include_coords=False))
+                parts.append(
+                    _format_observations_by_layer(nearby, include_coords=False)
+                )
 
             area_gists = self.store.search_gists_by_area(center=pos, radius=radius)
             if area_gists:
@@ -319,13 +343,17 @@ class MemoryTools:
                     parts.append(f"  - {g.text}")
 
             nearby_entities = self.store.query_entities(
-                near_coordinates=pos, spatial_radius=radius, n_results=10,
+                near_coordinates=pos,
+                spatial_radius=radius,
+                n_results=10,
             )
             if nearby_entities:
                 parts.append("Nearby entities:")
                 for ent in nearby_entities:
                     type_label = ent.entity_type or "object"
-                    parts.append(f"  - [{type_label}] {ent.name} (seen {ent.observation_count}x)")
+                    parts.append(
+                        f"  - [{type_label}] {ent.name} (seen {ent.observation_count}x)"
+                    )
 
         recent = self.store.temporal_query(
             last_n_seconds=include_recent_minutes * 60,
@@ -351,6 +379,7 @@ class MemoryTools:
         time_after: Optional[str] = None,
         time_before: Optional[str] = None,
     ) -> str:
+        """Search consolidated gists for *query* and return formatted results."""
         results = self.store.search_gists(
             query=query,
             n_results=n_results,
@@ -381,6 +410,7 @@ class MemoryTools:
         last_seen_after: Optional[str] = None,
         n_results: int = 10,
     ) -> str:
+        """Query stored entities by name, type, location, or recency."""
         near_coordinates = None
         if near_x is not None and near_y is not None:
             near_coordinates = np.array([near_x, near_y, 0.0])
@@ -446,8 +476,13 @@ class MemoryTools:
         time_after: Optional[str] = None,
         time_before: Optional[str] = None,
     ) -> str:
+        """Locate the centroid of memories matching *concept*."""
         result = self._locate_coords(
-            concept, n_results, layer, time_after, time_before,
+            concept,
+            n_results,
+            layer,
+            time_after,
+            time_before,
         )
         if result is None:
             return "Could not locate: no matching memories found."
@@ -457,9 +492,7 @@ class MemoryTools:
         for item in results:
             ln = getattr(item, "layer_name", None) or "unknown"
             layers_seen[ln] = layers_seen.get(ln, 0) + 1
-        layer_summary = ", ".join(
-            f"{v}x {k}" for k, v in sorted(layers_seen.items())
-        )
+        layer_summary = ", ".join(f"{v}x {k}" for k, v in sorted(layers_seen.items()))
 
         parts = [
             f"Location: ({centroid[0]:.1f}, {centroid[1]:.1f}, {centroid[2]:.1f})",
@@ -482,20 +515,25 @@ class MemoryTools:
         n_results: int = 10,
         radius_multiplier: float = 1.5,
     ) -> str:
+        """Recall observations near the location associated with *query*."""
         location = self._locate_coords(query, n_results=n_results)
         if location is None:
             return f"No memories found for: {query}"
-        centroid, radius, match_count, _results = location
+        centroid, radius, _, _results = location
         search_radius = max(radius * radius_multiplier, 2.0)
 
         observations = self.store.spatial_query(
-            center=centroid, radius=search_radius, n_results=n_results * 3,
+            center=centroid,
+            radius=search_radius,
+            n_results=n_results * 3,
         )
         gists = self.store.search_gists_by_area(
-            center=centroid, radius=search_radius,
+            center=centroid,
+            radius=search_radius,
         )
         entities = self.store.query_entities(
-            near_coordinates=centroid, spatial_radius=search_radius,
+            near_coordinates=centroid,
+            spatial_radius=search_radius,
             n_results=n_results,
         )
 
@@ -509,9 +547,7 @@ class MemoryTools:
         if gists:
             parts.append("Summaries:")
             for g in gists:
-                parts.append(
-                    f"  [{g.layer_name or 'cross-layer'}] {g.text}"
-                )
+                parts.append(f"  [{g.layer_name or 'cross-layer'}] {g.text}")
         if entities:
             parts.append("Entities:")
             for ent in entities:
@@ -568,14 +604,35 @@ class MemoryTools:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "What to search for"},
+                        "query": {
+                            "type": "string",
+                            "description": "What to search for",
+                        },
                         "n_results": {"type": "integer", "default": 10},
-                        "layer": {"type": "string", "description": "Filter by layer name"},
-                        "time_after": {"type": "string", "description": "After this time (e.g. '-10m', '-1h')"},
-                        "time_before": {"type": "string", "description": "Before this time"},
-                        "near_x": {"type": "number", "description": "X coordinate to search near"},
-                        "near_y": {"type": "number", "description": "Y coordinate to search near"},
-                        "spatial_radius": {"type": "number", "description": "Radius in meters"},
+                        "layer": {
+                            "type": "string",
+                            "description": "Filter by layer name",
+                        },
+                        "time_after": {
+                            "type": "string",
+                            "description": "After this time (e.g. '-10m', '-1h')",
+                        },
+                        "time_before": {
+                            "type": "string",
+                            "description": "Before this time",
+                        },
+                        "near_x": {
+                            "type": "number",
+                            "description": "X coordinate to search near",
+                        },
+                        "near_y": {
+                            "type": "number",
+                            "description": "Y coordinate to search near",
+                        },
+                        "spatial_radius": {
+                            "type": "number",
+                            "description": "Radius in meters",
+                        },
                         "episode_id": {"type": "string"},
                     },
                     "required": ["query"],
@@ -612,7 +669,11 @@ class MemoryTools:
                         "near_x": {"type": "number"},
                         "near_y": {"type": "number"},
                         "spatial_radius": {"type": "number"},
-                        "order": {"type": "string", "enum": ["newest", "oldest"], "default": "newest"},
+                        "order": {
+                            "type": "string",
+                            "enum": ["newest", "oldest"],
+                            "default": "newest",
+                        },
                         "n_results": {"type": "integer", "default": 10},
                     },
                 },
@@ -660,12 +721,21 @@ class MemoryTools:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "name": {"type": "string", "description": "Name substring match"},
-                        "entity_type": {"type": "string", "description": "Type filter (e.g. 'furniture')"},
+                        "name": {
+                            "type": "string",
+                            "description": "Name substring match",
+                        },
+                        "entity_type": {
+                            "type": "string",
+                            "description": "Type filter (e.g. 'furniture')",
+                        },
                         "near_x": {"type": "number"},
                         "near_y": {"type": "number"},
                         "spatial_radius": {"type": "number"},
-                        "last_seen_after": {"type": "string", "description": "e.g. '-10m'"},
+                        "last_seen_after": {
+                            "type": "string",
+                            "description": "e.g. '-10m'",
+                        },
                         "n_results": {"type": "integer", "default": 10},
                     },
                 },
@@ -678,7 +748,10 @@ class MemoryTools:
                     "properties": {
                         "concept": {"type": "string", "description": "What to locate"},
                         "n_results": {"type": "integer", "default": 10},
-                        "layer": {"type": "string", "description": "Filter by layer name"},
+                        "layer": {
+                            "type": "string",
+                            "description": "Filter by layer name",
+                        },
                         "time_after": {"type": "string"},
                         "time_before": {"type": "string"},
                     },
@@ -691,9 +764,16 @@ class MemoryTools:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "What to recall (e.g. 'kitchen', 'the red chair')"},
+                        "query": {
+                            "type": "string",
+                            "description": "What to recall (e.g. 'kitchen', 'the red chair')",
+                        },
                         "n_results": {"type": "integer", "default": 10},
-                        "radius_multiplier": {"type": "number", "default": 1.5, "description": "Multiplier for search radius around located area"},
+                        "radius_multiplier": {
+                            "type": "number",
+                            "default": 1.5,
+                            "description": "Multiplier for search radius around located area",
+                        },
                     },
                     "required": ["query"],
                 },

@@ -17,12 +17,15 @@ def _make_loader(dataset: str, data_dir: str) -> Any:
     """
     if dataset == "sqa3d":
         from harness.benchmarks.academic.loaders.sqa3d import SQA3DLoader
+
         return SQA3DLoader(data_dir)
     if dataset == "locomo":
         from harness.benchmarks.academic.loaders.locomo import LoCoMoLoader
+
         return LoCoMoLoader(data_dir)
     if dataset == "emem-bench":
         from harness.benchmarks.academic.loaders.emem_bench import EMEMBenchLoader
+
         return EMEMBenchLoader(data_dir)
     raise ValueError(f"Unknown dataset: {dataset!r}")
 
@@ -35,9 +38,11 @@ def _make_scorer(dataset: str, **kwargs: Any) -> Any:
     """
     if dataset == "sqa3d":
         from harness.benchmarks.academic.scorers.exact_match import ExactMatchScorer
+
         return ExactMatchScorer()
     if dataset == "locomo":
         from harness.benchmarks.academic.scorers.f1 import F1Scorer
+
         return F1Scorer()
     if dataset == "emem-bench":
         from harness.benchmarks.academic.scorers.emem_bench import EMEMBenchScorer
@@ -49,7 +54,9 @@ def _make_scorer(dataset: str, **kwargs: Any) -> Any:
     raise ValueError(f"Unknown dataset: {dataset!r}")
 
 
-def _make_providers(provider: str, embed_model: str, llm_model: str, **kwargs: Any) -> tuple:
+def _make_providers(
+    provider: str, embed_model: str, llm_model: str, **kwargs: Any
+) -> tuple:
     """Create ``(embedder, llm_client, agent_kwargs)`` for the given provider.
 
     :param provider: ``"ollama"`` or ``"gemini"``.
@@ -95,18 +102,24 @@ def _make_agent_factory(
     :param think: Enable thinking for Ollama models.
     :returns: Callable that takes a memory instance and returns an agent.
     """
+
     def factory(mem: Any) -> Any:
         system_prompt = None
         if system_preamble is not None:
             from harness.agent.prompts import build_system_prompt
+
             system_prompt = build_system_prompt(
-                mem.get_tool_definitions(), preamble=system_preamble,
+                mem.get_tool_definitions(),
+                preamble=system_preamble,
             )
         if provider == "gemini":
             from harness.agent.react_agent import GeminiReactAgent
+
             return GeminiReactAgent(mem, system_prompt=system_prompt, **agent_kwargs)
         from harness.agent.react_agent import ReactAgent
+
         return ReactAgent(mem, system_prompt=system_prompt, think=think, **agent_kwargs)
+
     return factory
 
 
@@ -185,7 +198,7 @@ def _print_report(report: BenchmarkReport) -> None:
 
     if "per_category" in s:
         print(f"\n  {'Category':<12} {'N':>5} {'Score':>7} {'Zero':>5} {'Perfect':>8}")
-        print(f"  {'-'*12} {'-'*5} {'-'*7} {'-'*5} {'-'*8}")
+        print(f"  {'-' * 12} {'-' * 5} {'-' * 7} {'-' * 5} {'-' * 8}")
         for cat, info in s["per_category"].items():
             print(
                 f"  {cat:<12} {info['n']:>5} {info['mean_score']:>7.1f}"
@@ -200,13 +213,17 @@ def _print_details(report: BenchmarkReport) -> None:
     :param report: The benchmark report to display.
     """
     for sr in report.sample_results:
-        print(f"\n--- Sample: {sr.sample_id} ({len(sr.question_results)} questions) ---")
+        print(
+            f"\n--- Sample: {sr.sample_id} ({len(sr.question_results)} questions) ---"
+        )
         for qr in sr.question_results:
             score = qr.scores.get("score", 0)
             tools = ",".join(qr.tools_used) if qr.tools_used else "none"
             marker = "OK" if score >= 50 else "LOW" if score > 0 else "FAIL"
             gt_display = qr.ground_truth if qr.ground_truth else "(empty)"
-            print(f"\n  [{marker}] q={qr.question_id} cat={qr.category} score={score:.0f} tools=[{tools}]")
+            print(
+                f"\n  [{marker}] q={qr.question_id} cat={qr.category} score={score:.0f} tools=[{tools}]"
+            )
             print(f"    Q: {qr.question}")
             print(f"    GT: {gt_display}")
             print(f"    Pred: {qr.prediction[:200]}")
@@ -218,10 +235,16 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     :param argv: Command-line arguments (defaults to ``sys.argv``).
     """
-    parser = argparse.ArgumentParser(description="Academic benchmark evaluation for eMEM")
-    parser.add_argument("--dataset", required=True, choices=["sqa3d", "locomo", "emem-bench"])
+    parser = argparse.ArgumentParser(
+        description="Academic benchmark evaluation for eMEM"
+    )
+    parser.add_argument(
+        "--dataset", required=True, choices=["sqa3d", "locomo", "emem-bench"]
+    )
     parser.add_argument("--data-dir", required=True, help="Path to dataset directory")
-    parser.add_argument("--ablation", default="full", help="Comma-separated ablation names")
+    parser.add_argument(
+        "--ablation", default="full", help="Comma-separated ablation names"
+    )
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--provider", default="ollama", choices=["ollama", "gemini"])
     parser.add_argument("--embed-model", default="nomic-embed-text-v2-moe:latest")
@@ -229,12 +252,24 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--ollama-url", default="http://localhost:11434")
     parser.add_argument("--gemini-api-key", default=None)
     parser.add_argument("--json", action="store_true", help="Output JSON report")
-    parser.add_argument("--think", action="store_true", help="Enable thinking for Ollama models")
-    parser.add_argument("--details", action="store_true", help="Print full Q/A/GT for each question")
-    parser.add_argument("--recency-weight", type=float, default=0.0,
-                        help="Recency weighting alpha (0=disabled, try 0.3)")
-    parser.add_argument("--recency-halflife", type=float, default=2592000.0,
-                        help="Recency halflife in seconds (default 30 days)")
+    parser.add_argument(
+        "--think", action="store_true", help="Enable thinking for Ollama models"
+    )
+    parser.add_argument(
+        "--details", action="store_true", help="Print full Q/A/GT for each question"
+    )
+    parser.add_argument(
+        "--recency-weight",
+        type=float,
+        default=0.0,
+        help="Recency weighting alpha (0=disabled, try 0.3)",
+    )
+    parser.add_argument(
+        "--recency-halflife",
+        type=float,
+        default=2592000.0,
+        help="Recency halflife in seconds (default 30 days)",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -246,15 +281,22 @@ def main(argv: Optional[List[str]] = None) -> None:
     ablation_names = [a.strip() for a in args.ablation.split(",")]
     for name in ablation_names:
         if name not in ABLATIONS:
-            print(f"Unknown ablation: {name!r}. Available: {list(ABLATIONS)}", file=sys.stderr)
+            print(
+                f"Unknown ablation: {name!r}. Available: {list(ABLATIONS)}",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
     embedder, llm, agent_kwargs = _make_providers(
-        args.provider, args.embed_model, args.llm_model,
-        ollama_url=args.ollama_url, gemini_api_key=args.gemini_api_key,
+        args.provider,
+        args.embed_model,
+        args.llm_model,
+        ollama_url=args.ollama_url,
+        gemini_api_key=args.gemini_api_key,
     )
     agent_factory = _make_agent_factory(
-        args.provider, agent_kwargs,
+        args.provider,
+        agent_kwargs,
         system_preamble=_SYSTEM_PREAMBLES.get(args.dataset),
         think=args.think,
     )

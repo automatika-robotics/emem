@@ -104,13 +104,15 @@ class SQA3DLoader:
                     sample_id=f"{scene_id}_{q_data['question_id']}",
                     scene_id=scene_id,
                     trajectory=trajectory,
-                    questions=[BenchmarkQuestion(
-                        question_id=q_data["question_id"],
-                        question=q_data["question"],
-                        answer=q_data["answer"],
-                        category=q_data.get("question_type", ""),
-                        extra_answers=q_data.get("extra_answers", []),
-                    )],
+                    questions=[
+                        BenchmarkQuestion(
+                            question_id=q_data["question_id"],
+                            question=q_data["question"],
+                            answer=q_data["answer"],
+                            category=q_data.get("question_type", ""),
+                            extra_answers=q_data.get("extra_answers", []),
+                        )
+                    ],
                     agent_position=q_data.get("position"),
                     agent_situation=q_data.get("situation", ""),
                 )
@@ -126,11 +128,15 @@ class SQA3DLoader:
         :returns: Mapping of scene_id to list of question dicts.
         """
         q_path = os.path.join(
-            self._data_dir, "sqa_task", "balanced",
+            self._data_dir,
+            "sqa_task",
+            "balanced",
             f"v1_balanced_questions_{self._split}_scannetv2.json",
         )
         a_path = os.path.join(
-            self._data_dir, "sqa_task", "balanced",
+            self._data_dir,
+            "sqa_task",
+            "balanced",
             f"v1_balanced_sqa_annotations_{self._split}_scannetv2.json",
         )
 
@@ -154,7 +160,11 @@ class SQA3DLoader:
             position: Optional[Tuple[float, float, float]] = None
             if "position" in ann:
                 p = ann["position"]
-                position = (float(p.get("x", 0)), float(p.get("y", 0)), float(p.get("z", 0)))
+                position = (
+                    float(p.get("x", 0)),
+                    float(p.get("y", 0)),
+                    float(p.get("z", 0)),
+                )
 
             annotations[qid] = {
                 "answer": best["answer"],
@@ -167,7 +177,15 @@ class SQA3DLoader:
         for q in q_data.get("questions", []):
             qid = str(q["question_id"])
             scene_id = q["scene_id"]
-            ann = annotations.get(qid, {"answer": "", "extra_answers": [], "position": None, "question_type": ""})
+            ann = annotations.get(
+                qid,
+                {
+                    "answer": "",
+                    "extra_answers": [],
+                    "position": None,
+                    "question_type": "",
+                },
+            )
 
             by_scene[scene_id].append({
                 "question_id": qid,
@@ -208,13 +226,15 @@ class SQA3DLoader:
             label_id = int(bbox[6])
             label = label_map.get(label_id, f"object_{label_id}")
 
-            frames.append(TrajectoryFrame(
-                frame_id=f"{scene_id}_obj{i}",
-                position=(cx, cy, cz),
-                timestamp=float(i),
-                text=label,
-                layer_name="object",
-            ))
+            frames.append(
+                TrajectoryFrame(
+                    frame_id=f"{scene_id}_obj{i}",
+                    position=(cx, cy, cz),
+                    timestamp=float(i),
+                    text=label,
+                    layer_name="object",
+                )
+            )
 
         return frames
 
@@ -225,7 +245,9 @@ class SQA3DLoader:
         """
         candidates = [
             os.path.join(self._data_dir, "scannetv2-labels.combined.tsv"),
-            os.path.join(self._data_dir, "scannet", "meta_data", "scannetv2-labels.combined.tsv"),
+            os.path.join(
+                self._data_dir, "scannet", "meta_data", "scannetv2-labels.combined.tsv"
+            ),
         ]
         for path in candidates:
             if os.path.exists(path):

@@ -162,14 +162,16 @@ class EMEMBenchLoader:
             for layer_name, text in layers.items():
                 if not text:
                     continue
-                frames.append(TrajectoryFrame(
-                    frame_id=f"{frame_id}_{layer_name}",
-                    position=position,
-                    timestamp=timestamp,
-                    text=str(text),
-                    layer_name=layer_name,
-                    image_path=image_path,
-                ))
+                frames.append(
+                    TrajectoryFrame(
+                        frame_id=f"{frame_id}_{layer_name}",
+                        position=position,
+                        timestamp=timestamp,
+                        text=str(text),
+                        layer_name=layer_name,
+                        image_path=image_path,
+                    )
+                )
 
         # Add interoception data as special frames
         for body_state in entry.get("interoception", []):
@@ -189,14 +191,16 @@ class EMEMBenchLoader:
             for key, value in body_state.items():
                 if key == "timestamp":
                     continue
-                frames.append(TrajectoryFrame(
-                    frame_id=f"interoception_{key}_{ts:.0f}",
-                    position=closest_pos,
-                    timestamp=ts,
-                    text=str(value),
-                    layer_name=key,
-                    is_interoception=True,
-                ))
+                frames.append(
+                    TrajectoryFrame(
+                        frame_id=f"interoception_{key}_{ts:.0f}",
+                        position=closest_pos,
+                        timestamp=ts,
+                        text=str(value),
+                        layer_name=key,
+                        is_interoception=True,
+                    )
+                )
 
         return frames
 
@@ -209,11 +213,15 @@ class EMEMBenchLoader:
         """
         questions: List[BenchmarkQuestion] = []
         for qa in entry.get("questions", []):
-            questions.append(BenchmarkQuestion(
-                question_id=str(qa.get("question_id", qa.get("id", len(questions)))),
-                question=str(qa.get("question", "")),
-                answer=str(qa.get("answer", "")),
-                category=str(qa.get("category", "")),
-                tools_expected=list(qa.get("tools_expected", [])),
-            ))
+            questions.append(
+                BenchmarkQuestion(
+                    question_id=str(
+                        qa.get("question_id", qa.get("id", len(questions)))
+                    ),
+                    question=str(qa.get("question", "")),
+                    answer=str(qa.get("answer", "")),
+                    category=str(qa.get("category", "")),
+                    tools_expected=list(qa.get("tools_expected", [])),
+                )
+            )
         return questions

@@ -18,9 +18,9 @@ class MockLLMAgent:
         self.mem = mem
 
     def think_and_act(self, user_query: str) -> str:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"User: {user_query}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         tool_calls = self._select_tools(user_query)
         results = []
@@ -58,7 +58,6 @@ def main():
     tmp = Path(tempfile.mkdtemp())
 
     with SpatioTemporalMemory(db_path=str(tmp / "agent.db")) as mem:
-
         # ── Office patrol ─────────────────────────────────────────
         mem.start_episode("office_patrol")
         for text, x, y in [

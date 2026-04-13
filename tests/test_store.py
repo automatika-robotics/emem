@@ -44,8 +44,16 @@ def store(tmp_path):
     s.close()
 
 
-def _make_obs(text="test", x=0.0, y=0.0, z=0.0, ts=1000.0, layer="default",
-              episode_id=None, **kwargs) -> ObservationNode:
+def _make_obs(
+    text="test",
+    x=0.0,
+    y=0.0,
+    z=0.0,
+    ts=1000.0,
+    layer="default",
+    episode_id=None,
+    **kwargs,
+) -> ObservationNode:
     return ObservationNode(
         text=text,
         coordinates=np.array([x, y, z]),
@@ -68,7 +76,9 @@ class TestAddAndRetrieve:
         np.testing.assert_array_almost_equal(retrieved.coordinates, [0, 0, 0])
 
     def test_add_batch(self, store):
-        observations = [_make_obs(f"obs_{i}", x=float(i), ts=1000.0 + i) for i in range(10)]
+        observations = [
+            _make_obs(f"obs_{i}", x=float(i), ts=1000.0 + i) for i in range(10)
+        ]
         ids = store.add_observations_batch(observations)
         assert len(ids) == 10
         assert store.count_observations() == 10
@@ -143,7 +153,9 @@ class TestSpatialQuery:
         store.add_observation(_make_obs("det", x=1.0, y=1.0, layer="detections"))
         store.add_observation(_make_obs("vlm", x=1.0, y=1.0, layer="vlm"))
 
-        results = store.spatial_query(center=np.array([1, 1, 0]), radius=2.0, layer="detections")
+        results = store.spatial_query(
+            center=np.array([1, 1, 0]), radius=2.0, layer="detections"
+        )
         assert len(results) == 1
         assert results[0].layer_name == "detections"
 
@@ -308,11 +320,15 @@ class TestUnifiedSemanticSearch:
         )
         store.add_gist(gist)
 
-        results = store.search_gists_by_area(center=np.array([5.0, 5.0, 0.0]), radius=3.0)
+        results = store.search_gists_by_area(
+            center=np.array([5.0, 5.0, 0.0]), radius=3.0
+        )
         assert len(results) == 1
         assert "Kitchen" in results[0].text
 
-        far_results = store.search_gists_by_area(center=np.array([100.0, 100.0, 0.0]), radius=1.0)
+        far_results = store.search_gists_by_area(
+            center=np.array([100.0, 100.0, 0.0]), radius=1.0
+        )
         assert len(far_results) == 0
 
 
@@ -359,8 +375,9 @@ class TestPersistence:
         s2.close()
 
 
-def _make_entity(name="red chair", x=5.0, y=5.0, z=0.0, ts=1000.0,
-                 entity_type=None, **kwargs) -> EntityNode:
+def _make_entity(
+    name="red chair", x=5.0, y=5.0, z=0.0, ts=1000.0, entity_type=None, **kwargs
+) -> EntityNode:
     return EntityNode(
         name=name,
         coordinates=np.array([x, y, z]),
@@ -420,7 +437,7 @@ class TestEntityMatching:
         entity = _make_entity("red chair", x=5.0, y=5.0)
         store.add_entity(entity)
 
-        match = store.find_matching_entity("blue sofa", np.array([5.0, 5.0, 0.0]))
+        store.find_matching_entity("blue sofa", np.array([5.0, 5.0, 0.0]))
         # Might or might not match depending on embedding similarity
         # But with FakeEmbeddingProvider, different names produce different embeddings
         # so similarity should be below threshold for very different names
@@ -459,7 +476,8 @@ class TestEntityQuery:
         store.add_entity(_make_entity("far", x=100.0, y=100.0))
 
         results = store.query_entities(
-            near_coordinates=np.array([5.0, 5.0, 0.0]), spatial_radius=3.0,
+            near_coordinates=np.array([5.0, 5.0, 0.0]),
+            spatial_radius=3.0,
         )
         assert len(results) == 1
         assert results[0].name == "near"
@@ -481,11 +499,14 @@ class TestEntityEdges:
         store.add_observation(obs)
 
         from emem.types import Edge
-        store.add_edge(Edge(
-            source_id=entity.id,
-            target_id=obs.id,
-            edge_type=EdgeType.OBSERVED_IN,
-        ))
+
+        store.add_edge(
+            Edge(
+                source_id=entity.id,
+                target_id=obs.id,
+                edge_type=EdgeType.OBSERVED_IN,
+            )
+        )
 
         observations = store.get_entity_observations(entity.id)
         assert len(observations) == 1
@@ -498,11 +519,14 @@ class TestEntityEdges:
         store.add_entity(e2)
 
         from emem.types import Edge
-        store.add_edge(Edge(
-            source_id=e1.id,
-            target_id=e2.id,
-            edge_type=EdgeType.COOCCURS_WITH,
-        ))
+
+        store.add_edge(
+            Edge(
+                source_id=e1.id,
+                target_id=e2.id,
+                edge_type=EdgeType.COOCCURS_WITH,
+            )
+        )
 
         cooccurring = store.get_cooccurring_entities(e1.id)
         assert len(cooccurring) == 1
@@ -521,7 +545,9 @@ class TestRecencyWeighting:
         store.add_observation(_make_obs("beta", ts=2000.0))
 
         results_no_ref = store.semantic_search("alpha", n_results=10)
-        results_with_ref = store.semantic_search("alpha", n_results=10, reference_time=3000.0)
+        results_with_ref = store.semantic_search(
+            "alpha", n_results=10, reference_time=3000.0
+        )
         # Same ordering since recency_weight=0
         assert [r.id for r in results_no_ref] == [r.id for r in results_with_ref]
 
@@ -541,7 +567,9 @@ class TestRecencyWeighting:
         s.add_observation(_make_obs("identical test phrase", ts=100.0))
         s.add_observation(_make_obs("identical test phrase", ts=9000.0))
 
-        results = s.semantic_search("identical test phrase", n_results=2, reference_time=10000.0)
+        results = s.semantic_search(
+            "identical test phrase", n_results=2, reference_time=10000.0
+        )
         assert len(results) == 2
         # The recent one (ts=9000) should rank first due to lower recency penalty
         assert results[0].timestamp == 9000.0

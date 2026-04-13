@@ -64,12 +64,18 @@ def compute_metrics(
         qr.correct_tool = qr.query.expected_tool in qr.tools_used
         if qr.query.expected_substrings:
             lower = qr.answer.lower()
-            qr.answer_relevant = all(s.lower() in lower for s in qr.query.expected_substrings)
+            qr.answer_relevant = all(
+                s.lower() in lower for s in qr.query.expected_substrings
+            )
         else:
             qr.answer_relevant = len(qr.answer.strip()) > 0
 
-    report.tool_selection_accuracy = sum(qr.correct_tool for qr in query_results) / len(query_results)
-    report.answer_relevance_rate = sum(qr.answer_relevant for qr in query_results) / len(query_results)
+    report.tool_selection_accuracy = sum(qr.correct_tool for qr in query_results) / len(
+        query_results
+    )
+    report.answer_relevance_rate = sum(
+        qr.answer_relevant for qr in query_results
+    ) / len(query_results)
 
     latencies = sorted(qr.latency_s for qr in query_results)
     report.query_latency_p50 = _percentile(latencies, 50)

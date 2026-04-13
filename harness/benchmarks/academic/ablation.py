@@ -2,9 +2,16 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 ALL_TOOLS = [
-    "semantic_search", "spatial_query", "temporal_query",
-    "episode_summary", "get_current_context", "search_gists",
-    "entity_query", "locate", "recall", "body_status",
+    "semantic_search",
+    "spatial_query",
+    "temporal_query",
+    "episode_summary",
+    "get_current_context",
+    "search_gists",
+    "entity_query",
+    "locate",
+    "recall",
+    "body_status",
 ]
 
 SPATIAL_TOOLS = {"locate", "recall", "spatial_query"}

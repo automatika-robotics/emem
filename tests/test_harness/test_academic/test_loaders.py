@@ -134,9 +134,13 @@ class TestSQA3DLoader:
         sqa_dir = os.path.join(tmpdir, "sqa_task", "balanced")
         os.makedirs(sqa_dir, exist_ok=True)
 
-        with open(os.path.join(sqa_dir, "v1_balanced_questions_val_scannetv2.json"), "w") as f:
+        with open(
+            os.path.join(sqa_dir, "v1_balanced_questions_val_scannetv2.json"), "w"
+        ) as f:
             json.dump({"questions": questions}, f)
-        with open(os.path.join(sqa_dir, "v1_balanced_sqa_annotations_val_scannetv2.json"), "w") as f:
+        with open(
+            os.path.join(sqa_dir, "v1_balanced_sqa_annotations_val_scannetv2.json"), "w"
+        ) as f:
             json.dump({"annotations": annotations}, f)
 
     def test_load_scenes(self):

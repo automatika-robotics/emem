@@ -62,12 +62,10 @@ class TestOllamaLLMClient:
         from harness.providers.ollama_llm import OllamaLLMClient
 
         client = OllamaLLMClient()
-        result = client.synthesize(
-            {
-                "description": ["A small room with a door."],
-                "place": ["kitchen"],
-            }
-        )
+        result = client.synthesize({
+            "description": ["A small room with a door."],
+            "place": ["kitchen"],
+        })
         assert isinstance(result, str)
         assert len(result) > 0
 
@@ -75,9 +73,7 @@ class TestOllamaLLMClient:
         from harness.providers.ollama_llm import OllamaLLMClient
 
         client = OllamaLLMClient()
-        result = client.extract_entities(
-            ["I see a red door and a wooden table."]
-        )
+        result = client.extract_entities(["I see a red door and a wooden table."])
         assert isinstance(result, list)
         # Should find at least one entity
         if result:

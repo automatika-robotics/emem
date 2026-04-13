@@ -30,8 +30,7 @@ class OllamaLLMClient:
 
     def synthesize(self, layer_texts: dict[str, list[str]]) -> str:
         block = "\n".join(
-            f"[{layer}]: {'; '.join(texts)}"
-            for layer, texts in layer_texts.items()
+            f"[{layer}]: {'; '.join(texts)}" for layer, texts in layer_texts.items()
         )
         return self._chat(
             "Synthesize the following observations grouped by perception layer "
@@ -66,5 +65,3 @@ class OllamaLLMClient:
             body["think"] = think if think is not None else False
         data = post_json(self._url, body, timeout=300)
         return strip_think_tags(data["message"]["content"])
-
-

@@ -11,7 +11,9 @@ class F1Scorer:
     def name(self) -> str:
         return "f1"
 
-    def score(self, question: str, prediction: str, ground_truth: str) -> Dict[str, Any]:
+    def score(
+        self, question: str, prediction: str, ground_truth: str
+    ) -> Dict[str, Any]:
         """Compute token F1 and BLEU-1 scores.
 
         :param question: The benchmark question (unused, kept for protocol).

@@ -23,7 +23,10 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from harness.benchmarks.academic.caption_cache import CaptionCache
-from harness.benchmarks.emem_bench.generate_questions import _is_valid_caption, _is_valid_place
+from harness.benchmarks.emem_bench.generate_questions import (
+    _is_valid_caption,
+    _is_valid_place,
+)
 from harness.environments.ai2thor_adapter import AI2ThorAdapter
 
 log = logging.getLogger(__name__)
@@ -47,17 +50,38 @@ LAYER_PROMPTS: Dict[str, str] = {
 # Default scenes covering different room types
 DEFAULT_SCENES: List[str] = [
     # Kitchens (FloorPlan 1-30)
-    "FloorPlan1", "FloorPlan2", "FloorPlan3", "FloorPlan5",
-    "FloorPlan7", "FloorPlan10", "FloorPlan14", "FloorPlan18",
-    "FloorPlan22", "FloorPlan26",
+    "FloorPlan1",
+    "FloorPlan2",
+    "FloorPlan3",
+    "FloorPlan5",
+    "FloorPlan7",
+    "FloorPlan10",
+    "FloorPlan14",
+    "FloorPlan18",
+    "FloorPlan22",
+    "FloorPlan26",
     # Living rooms (FloorPlan 201-230)
-    "FloorPlan201", "FloorPlan202", "FloorPlan205", "FloorPlan208",
-    "FloorPlan210", "FloorPlan215", "FloorPlan218", "FloorPlan222",
-    "FloorPlan225", "FloorPlan228",
+    "FloorPlan201",
+    "FloorPlan202",
+    "FloorPlan205",
+    "FloorPlan208",
+    "FloorPlan210",
+    "FloorPlan215",
+    "FloorPlan218",
+    "FloorPlan222",
+    "FloorPlan225",
+    "FloorPlan228",
     # Bedrooms (FloorPlan 301-330)
-    "FloorPlan301", "FloorPlan302", "FloorPlan305", "FloorPlan308",
-    "FloorPlan310", "FloorPlan315", "FloorPlan318", "FloorPlan322",
-    "FloorPlan325", "FloorPlan328",
+    "FloorPlan301",
+    "FloorPlan302",
+    "FloorPlan305",
+    "FloorPlan308",
+    "FloorPlan310",
+    "FloorPlan315",
+    "FloorPlan318",
+    "FloorPlan322",
+    "FloorPlan325",
+    "FloorPlan328",
 ]
 
 
@@ -69,6 +93,7 @@ def _make_vlm(model: str, base_url: str) -> Any:
     :returns: VLM client with ``describe()`` method.
     """
     from harness.providers.ollama_vlm import OllamaVLM
+
     return OllamaVLM(model=model, base_url=base_url)
 
 
@@ -209,7 +234,9 @@ def collect_scene(
                 # Filter invalid captions at collection time
                 if layer_name == "place" and not _is_valid_place(caption):
                     caption = ""
-                elif layer_name in ("vlm", "detections") and not _is_valid_caption(caption):
+                elif layer_name in ("vlm", "detections") and not _is_valid_caption(
+                    caption
+                ):
                     caption = ""
 
                 layers[layer_name] = caption
@@ -230,7 +257,7 @@ def collect_scene(
                 break
 
             # Step
-            frame, pos, _, done, info = env.step(0)
+            frame, pos, _, done, _ = env.step(0)
 
         interoception = _generate_interoception(timestamps)
 
@@ -254,7 +281,9 @@ def collect_scene(
 
         log.info(
             "Scene %s: %d frames, %d objects",
-            scene, len(trajectory), len(scene_objects),
+            scene,
+            len(trajectory),
+            len(scene_objects),
         )
         return sample
 
@@ -269,6 +298,7 @@ def _save_frame(frame: np.ndarray, path: str) -> None:
     :param path: Output file path.
     """
     from PIL import Image
+
     img = Image.fromarray(frame)
     img.save(path, quality=85)
 
@@ -288,12 +318,19 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     parser.add_argument("--vlm-model", default="qwen3.5:latest")
     parser.add_argument("--ollama-url", default="http://localhost:11434")
-    parser.add_argument("--output", required=True, help="Output directory for scene data")
-    parser.add_argument("--index", default=None,
-                        help="Path for benchmark index JSON (default: <output>/../emem-bench-v0.json)")
+    parser.add_argument(
+        "--output", required=True, help="Output directory for scene data"
+    )
+    parser.add_argument(
+        "--index",
+        default=None,
+        help="Path for benchmark index JSON (default: <output>/../emem-bench-v0.json)",
+    )
     parser.add_argument("--max-waypoints", type=int, default=None)
     parser.add_argument("--save-frames", action="store_true")
-    parser.add_argument("--no-headless", dest="headless", action="store_false", default=True)
+    parser.add_argument(
+        "--no-headless", dest="headless", action="store_false", default=True
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -337,7 +374,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     if args.index:
         index_path = args.index
     else:
-        index_path = os.path.normpath(os.path.join(args.output, "..", "emem-bench-v0.json"))
+        index_path = os.path.normpath(
+            os.path.join(args.output, "..", "emem-bench-v0.json")
+        )
 
     # Make trajectory_path entries relative to the index file's directory
     index_dir = os.path.dirname(os.path.abspath(index_path))

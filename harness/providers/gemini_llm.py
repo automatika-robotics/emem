@@ -36,8 +36,7 @@ class GeminiLLMClient:
 
     def synthesize(self, layer_texts: dict[str, list[str]]) -> str:
         block = "\n".join(
-            f"[{layer}]: {'; '.join(texts)}"
-            for layer, texts in layer_texts.items()
+            f"[{layer}]: {'; '.join(texts)}" for layer, texts in layer_texts.items()
         )
         return self._generate(
             "Synthesize the following observations grouped by perception layer "
@@ -71,12 +70,14 @@ class GeminiLLMClient:
         :returns: Model's text response.
         """
         payload: dict[str, Any] = {
-            "contents": [{
-                "parts": [
-                    {"inline_data": {"mime_type": mime_type, "data": image_b64}},
-                    {"text": prompt},
-                ],
-            }],
+            "contents": [
+                {
+                    "parts": [
+                        {"inline_data": {"mime_type": mime_type, "data": image_b64}},
+                        {"text": prompt},
+                    ],
+                }
+            ],
         }
         if max_tokens is not None:
             payload["generationConfig"] = {"maxOutputTokens": max_tokens}
@@ -95,5 +96,3 @@ def _extract_text(data: dict) -> str:
     except (KeyError, IndexError):
         return ""
     return strip_think_tags(text)
-
-

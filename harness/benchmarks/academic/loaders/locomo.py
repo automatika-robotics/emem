@@ -140,15 +140,21 @@ class LoCoMoLoader:
                 speaker = turn.get("speaker", "unknown")
                 text = turn.get("text", "")
                 # Use session timestamp + offset per turn within session
-                ts = session_ts + turn_idx * 30.0 if session_ts > 0 else global_turn * 60.0
+                ts = (
+                    session_ts + turn_idx * 30.0
+                    if session_ts > 0
+                    else global_turn * 60.0
+                )
 
-                frames.append(TrajectoryFrame(
-                    frame_id=turn.get("dia_id", f"turn_{global_turn}"),
-                    position=(0.0, 0.0, 0.0),
-                    timestamp=ts,
-                    text=f"{date_prefix}[{speaker}]: {text}",
-                    layer_name="conversation",
-                ))
+                frames.append(
+                    TrajectoryFrame(
+                        frame_id=turn.get("dia_id", f"turn_{global_turn}"),
+                        position=(0.0, 0.0, 0.0),
+                        timestamp=ts,
+                        text=f"{date_prefix}[{speaker}]: {text}",
+                        layer_name="conversation",
+                    )
+                )
                 global_turn += 1
 
         return frames
@@ -164,11 +170,13 @@ class LoCoMoLoader:
         qa_pairs = conv.get("qa", conv.get("qa_pairs", conv.get("questions", [])))
 
         for i, qa in enumerate(qa_pairs):
-            questions.append(BenchmarkQuestion(
-                question_id=str(qa.get("question_id", qa.get("id", i))),
-                question=str(qa.get("question", qa.get("query", ""))),
-                answer=str(qa.get("answer", qa.get("response", ""))),
-                category=str(qa.get("category", qa.get("type", ""))),
-            ))
+            questions.append(
+                BenchmarkQuestion(
+                    question_id=str(qa.get("question_id", qa.get("id", i))),
+                    question=str(qa.get("question", qa.get("query", ""))),
+                    answer=str(qa.get("answer", qa.get("response", ""))),
+                    category=str(qa.get("category", qa.get("type", ""))),
+                )
+            )
 
         return questions

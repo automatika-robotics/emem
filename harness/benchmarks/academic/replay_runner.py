@@ -84,7 +84,12 @@ class BenchmarkReport:
         for qr in self.all_question_results:
             cat = qr.category or "unknown"
             if cat not in per_category:
-                per_category[cat] = {"n": 0, "scores": [], "tools_failed": 0, "tool_jaccard": []}
+                per_category[cat] = {
+                    "n": 0,
+                    "scores": [],
+                    "tools_failed": 0,
+                    "tool_jaccard": [],
+                }
             per_category[cat]["n"] += 1
             per_category[cat]["scores"].append(qr.scores.get("score", 0))
             if not qr.tools_used or "none" in qr.tools_used:
@@ -187,9 +192,7 @@ class _AblatedMemory:
         self._ablation = ablation
 
     def get_tool_definitions(self) -> List[Dict[str, Any]]:
-        return self._ablation.filter_tool_definitions(
-            self._mem.get_tool_definitions()
-        )
+        return self._ablation.filter_tool_definitions(self._mem.get_tool_definitions())
 
     def dispatch_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         if tool_name not in self._ablation.available_tools:
@@ -264,8 +267,11 @@ class BenchmarkRunner:
 
             log.info(
                 "[%s] sample=%s scene=%s frames=%d questions=%d",
-                self._ablation.name, sample.sample_id, sample.scene_id,
-                len(sample.trajectory), len(sample.questions),
+                self._ablation.name,
+                sample.sample_id,
+                sample.scene_id,
+                len(sample.trajectory),
+                len(sample.questions),
             )
 
             sr = self._run_sample(sample, SpatioTemporalMemory)
@@ -275,8 +281,10 @@ class BenchmarkRunner:
         report.total_time_s = time.monotonic() - t_start
         log.info(
             "[%s] Done: %d samples, mean_score=%.1f, time=%.1fs",
-            self._ablation.name, count,
-            report.mean_score(), report.total_time_s,
+            self._ablation.name,
+            count,
+            report.mean_score(),
+            report.total_time_s,
         )
         return report
 
@@ -335,11 +343,11 @@ class BenchmarkRunner:
                 replay_time[0] = max(replay_time[0], frame.timestamp)
                 sr.n_observations += 1
 
-            n_intero = sum(1 for f in sample.trajectory
-                          if f.is_interoception)
+            n_intero = sum(1 for f in sample.trajectory if f.is_interoception)
             log.info(
                 "  ingested %d frames (%d interoception)",
-                sr.n_observations, n_intero,
+                sr.n_observations,
+                n_intero,
             )
 
             mem.end_episode(consolidate=self._ablation.use_consolidation)
@@ -370,9 +378,11 @@ class BenchmarkRunner:
                 gt_short = qr.ground_truth[:40] if qr.ground_truth else "(empty)"
                 log.info(
                     "  q=%s cat=%s score=%.0f tools=[%s] gt=%s pred=%s",
-                    bq.question_id, bq.category or "?",
+                    bq.question_id,
+                    bq.category or "?",
                     qr.scores.get("score", -1),
-                    tools_str, gt_short,
+                    tools_str,
+                    gt_short,
                     qr.prediction[:80],
                 )
 
@@ -398,8 +408,10 @@ class BenchmarkRunner:
 
         answer = _clean_answer(result.answer)
 
-        if hasattr(self._scorer, 'score_with_category'):
-            scores = self._scorer.score_with_category(bq.question, answer, bq.answer, bq.category)
+        if hasattr(self._scorer, "score_with_category"):
+            scores = self._scorer.score_with_category(
+                bq.question, answer, bq.answer, bq.category
+            )
         else:
             scores = self._scorer.score(bq.question, answer, bq.answer)
 
@@ -424,6 +436,7 @@ class BenchmarkRunner:
         if self._agent_factory is not None:
             return self._agent_factory(mem)
         from harness.agent.react_agent import ReactAgent
+
         return ReactAgent(mem, system_prompt=self._build_system_prompt(mem))
 
     def _build_system_prompt(self, mem: Any) -> str | None:
@@ -435,6 +448,8 @@ class BenchmarkRunner:
         if self._system_preamble is None:
             return None
         from harness.agent.prompts import build_system_prompt
+
         return build_system_prompt(
-            mem.get_tool_definitions(), preamble=self._system_preamble,
+            mem.get_tool_definitions(),
+            preamble=self._system_preamble,
         )

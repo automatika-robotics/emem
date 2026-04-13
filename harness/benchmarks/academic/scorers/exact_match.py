@@ -10,7 +10,9 @@ class ExactMatchScorer:
     def name(self) -> str:
         return "exact_match"
 
-    def score(self, question: str, prediction: str, ground_truth: str) -> Dict[str, Any]:
+    def score(
+        self, question: str, prediction: str, ground_truth: str
+    ) -> Dict[str, Any]:
         """Score by exact match after normalizing both strings.
 
         :param question: The benchmark question (unused, kept for protocol).

@@ -44,8 +44,12 @@ def _obs(text, x=0.0, y=0.0, ts=1000.0, episode_id=None):
 class TestEpisodeConsolidation:
     def test_consolidate_episode(self, store, engine):
         ep_id = store.start_episode("test", 1000.0)
-        store.add_observation(_obs("saw a chair", x=1.0, y=1.0, ts=1001.0, episode_id=ep_id))
-        store.add_observation(_obs("saw a table", x=1.5, y=1.5, ts=1002.0, episode_id=ep_id))
+        store.add_observation(
+            _obs("saw a chair", x=1.0, y=1.0, ts=1001.0, episode_id=ep_id)
+        )
+        store.add_observation(
+            _obs("saw a table", x=1.5, y=1.5, ts=1002.0, episode_id=ep_id)
+        )
         store.end_episode(ep_id, 1003.0)
 
         gist_ids = engine.consolidate_episode(ep_id)
@@ -147,8 +151,14 @@ class TestCrossLayerSynthesis:
         engine = ConsolidationEngine(store=store, config=config)
 
         ep_id = store.start_episode("test", 1000.0)
-        store.add_observation(self._obs_with_layer("white cabinets", "vlm", ts=1001.0, episode_id=ep_id))
-        store.add_observation(self._obs_with_layer("chair, table", "detections", ts=1002.0, episode_id=ep_id))
+        store.add_observation(
+            self._obs_with_layer("white cabinets", "vlm", ts=1001.0, episode_id=ep_id)
+        )
+        store.add_observation(
+            self._obs_with_layer(
+                "chair, table", "detections", ts=1002.0, episode_id=ep_id
+            )
+        )
         store.end_episode(ep_id, 1003.0)
 
         gist_ids = engine.consolidate_episode(ep_id)
@@ -166,8 +176,12 @@ class TestCrossLayerSynthesis:
         engine = ConsolidationEngine(store=store, config=config)
 
         ep_id = store.start_episode("test", 1000.0)
-        store.add_observation(self._obs_with_layer("saw chair", "vlm", ts=1001.0, episode_id=ep_id))
-        store.add_observation(self._obs_with_layer("saw table", "vlm", ts=1002.0, episode_id=ep_id))
+        store.add_observation(
+            self._obs_with_layer("saw chair", "vlm", ts=1001.0, episode_id=ep_id)
+        )
+        store.add_observation(
+            self._obs_with_layer("saw table", "vlm", ts=1002.0, episode_id=ep_id)
+        )
         store.end_episode(ep_id, 1003.0)
 
         gist_ids = engine.consolidate_episode(ep_id)
@@ -206,11 +220,17 @@ class TestEntityExtraction:
             consolidation_window=100.0,
             consolidation_min_samples=2,
         )
-        engine = ConsolidationEngine(store=store, config=config, llm_client=FakeEntityExtractor())
+        engine = ConsolidationEngine(
+            store=store, config=config, llm_client=FakeEntityExtractor()
+        )
 
         ep_id = store.start_episode("test", 1000.0)
-        store.add_observation(_obs("saw a chair", x=5.0, y=5.0, ts=1001.0, episode_id=ep_id))
-        store.add_observation(_obs("saw a table", x=5.5, y=5.5, ts=1002.0, episode_id=ep_id))
+        store.add_observation(
+            _obs("saw a chair", x=5.0, y=5.0, ts=1001.0, episode_id=ep_id)
+        )
+        store.add_observation(
+            _obs("saw a table", x=5.5, y=5.5, ts=1002.0, episode_id=ep_id)
+        )
         store.end_episode(ep_id, 1003.0)
 
         engine.consolidate_episode(ep_id)
@@ -235,7 +255,9 @@ class TestEntityExtraction:
     def test_no_extraction_with_fallback_summarizer(self, store, engine):
         """ConcatenationSummarizer returns no entities."""
         ep_id = store.start_episode("test", 1000.0)
-        store.add_observation(_obs("saw a chair", x=5.0, y=5.0, ts=1001.0, episode_id=ep_id))
+        store.add_observation(
+            _obs("saw a chair", x=5.0, y=5.0, ts=1001.0, episode_id=ep_id)
+        )
         store.end_episode(ep_id, 1003.0)
 
         engine.consolidate_episode(ep_id)
@@ -248,12 +270,18 @@ class TestEntityExtraction:
             consolidation_window=100.0,
             consolidation_min_samples=2,
         )
-        engine = ConsolidationEngine(store=store, config=config, llm_client=FakeEntityExtractor())
+        engine = ConsolidationEngine(
+            store=store, config=config, llm_client=FakeEntityExtractor()
+        )
 
         # First episode — creates entity
         ep1 = store.start_episode("ep1", 1000.0)
-        store.add_observation(_obs("saw a chair", x=5.0, y=5.0, ts=1001.0, episode_id=ep1))
-        store.add_observation(_obs("found a chair", x=5.2, y=5.2, ts=1002.0, episode_id=ep1))
+        store.add_observation(
+            _obs("saw a chair", x=5.0, y=5.0, ts=1001.0, episode_id=ep1)
+        )
+        store.add_observation(
+            _obs("found a chair", x=5.2, y=5.2, ts=1002.0, episode_id=ep1)
+        )
         store.end_episode(ep1, 1003.0)
         engine.consolidate_episode(ep1)
 
@@ -263,8 +291,12 @@ class TestEntityExtraction:
 
         # Second episode — should merge into existing entity
         ep2 = store.start_episode("ep2", 2000.0)
-        store.add_observation(_obs("chair still here", x=5.1, y=5.1, ts=2001.0, episode_id=ep2))
-        store.add_observation(_obs("chair looks same", x=5.0, y=5.0, ts=2002.0, episode_id=ep2))
+        store.add_observation(
+            _obs("chair still here", x=5.1, y=5.1, ts=2001.0, episode_id=ep2)
+        )
+        store.add_observation(
+            _obs("chair looks same", x=5.0, y=5.0, ts=2002.0, episode_id=ep2)
+        )
         store.end_episode(ep2, 2003.0)
         engine.consolidate_episode(ep2)
 
@@ -283,8 +315,12 @@ class TestTwoPhaseConsolidation:
         engine = ConsolidationEngine(store=store, config=config)
 
         ep_id = store.start_episode("test", 1000.0)
-        store.add_observation(_obs("saw a chair", x=1.0, y=1.0, ts=1001.0, episode_id=ep_id))
-        store.add_observation(_obs("saw a table", x=1.5, y=1.5, ts=1002.0, episode_id=ep_id))
+        store.add_observation(
+            _obs("saw a chair", x=1.0, y=1.0, ts=1001.0, episode_id=ep_id)
+        )
+        store.add_observation(
+            _obs("saw a table", x=1.5, y=1.5, ts=1002.0, episode_id=ep_id)
+        )
         store.end_episode(ep_id, 1003.0)
 
         engine.consolidate_episode(ep_id)
@@ -313,8 +349,12 @@ class TestTwoPhaseConsolidation:
         engine = ConsolidationEngine(store=store, config=config)
 
         ep_id = store.start_episode("test", 1000.0)
-        store.add_observation(_obs("saw a chair", x=1.0, y=1.0, ts=1001.0, episode_id=ep_id))
-        store.add_observation(_obs("saw a table", x=1.5, y=1.5, ts=1002.0, episode_id=ep_id))
+        store.add_observation(
+            _obs("saw a chair", x=1.0, y=1.0, ts=1001.0, episode_id=ep_id)
+        )
+        store.add_observation(
+            _obs("saw a table", x=1.5, y=1.5, ts=1002.0, episode_id=ep_id)
+        )
         store.end_episode(ep_id, 1003.0)
 
         engine.consolidate_episode(ep_id)
@@ -338,8 +378,12 @@ class TestTwoPhaseConsolidation:
         engine = ConsolidationEngine(store=store, config=config)
 
         ep_id = store.start_episode("test", 1000.0)
-        store.add_observation(_obs("saw a chair", x=1.0, y=1.0, ts=1001.0, episode_id=ep_id))
-        store.add_observation(_obs("saw a table", x=1.5, y=1.5, ts=1002.0, episode_id=ep_id))
+        store.add_observation(
+            _obs("saw a chair", x=1.0, y=1.0, ts=1001.0, episode_id=ep_id)
+        )
+        store.add_observation(
+            _obs("saw a table", x=1.5, y=1.5, ts=1002.0, episode_id=ep_id)
+        )
         store.end_episode(ep_id, 1003.0)
 
         engine.consolidate_episode(ep_id)
@@ -368,7 +412,7 @@ class TestTwoPhaseConsolidation:
             get_current_time=lambda: sim_time[0],
         )
 
-        ep_id = mem.start_episode("test")
+        mem.start_episode("test")
         mem.add("chair", x=1.0, y=1.0, timestamp=1001.0)
         mem.add("table", x=1.5, y=1.5, timestamp=1002.0)
         sim_time[0] = 1003.0
@@ -401,7 +445,7 @@ class TestEarlyEntityExtraction:
             llm_client=FakeEntityExtractor(),
         )
 
-        ep_id = mem.start_episode("test")
+        mem.start_episode("test")
         mem.add("saw a chair", x=5.0, y=5.0, timestamp=1001.0)
         mem.add("saw a table", x=5.5, y=5.5, timestamp=1002.0)
         # flush_batch_size=2 triggers auto-flush after 2nd add
@@ -432,7 +476,7 @@ class TestEarlyEntityExtraction:
             llm_client=FakeEntityExtractor(),
         )
 
-        ep_id = mem.start_episode("test")
+        mem.start_episode("test")
         mem.add("saw a chair", x=5.0, y=5.0, timestamp=1001.0)
         mem.add("saw a table", x=5.5, y=5.5, timestamp=1002.0)
 
@@ -465,7 +509,7 @@ class TestEarlyEntityExtraction:
         )
         mem = SpatioTemporalMemory(config=config)
 
-        ep_id = mem.start_episode("test")
+        mem.start_episode("test")
         mem.add("saw a chair", x=5.0, y=5.0, timestamp=1001.0)
         mem.add("saw a table", x=5.5, y=5.5, timestamp=1002.0)
 

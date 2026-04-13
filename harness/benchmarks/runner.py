@@ -103,7 +103,11 @@ class HarnessRunner:
         n_ep = 0
         vlm_latencies: list[float] = []
 
-        log.info("=== Ingestion: %d steps, VLM every %d ===", self._n_steps, self._vlm_every_n)
+        log.info(
+            "=== Ingestion: %d steps, VLM every %d ===",
+            self._n_steps,
+            self._vlm_every_n,
+        )
         t_ingest = time.monotonic()
 
         mem.start_episode("exploration")
@@ -112,10 +116,16 @@ class HarnessRunner:
 
         for step in range(self._n_steps):
             action = random.choice(env.available_actions())
-            frame, pos, reward, done, info = env.step(action)
+            frame, pos, _, done, _ = env.step(action)
 
             if step % self._vlm_every_n == 0:
-                log.info("[step %d/%d] VLM at pos=(%.1f, %.1f)...", step, self._n_steps, pos[0], pos[1])
+                log.info(
+                    "[step %d/%d] VLM at pos=(%.1f, %.1f)...",
+                    step,
+                    self._n_steps,
+                    pos[0],
+                    pos[1],
+                )
 
                 t0 = time.monotonic()
                 description = vlm.describe(
@@ -137,7 +147,12 @@ class HarnessRunner:
                 log.info("  place (%.1fs): %s", dt, place[:80])
 
                 if description.strip():
-                    mem.add(description, x=float(pos[0]), y=float(pos[1]), layer_name="description")
+                    mem.add(
+                        description,
+                        x=float(pos[0]),
+                        y=float(pos[1]),
+                        layer_name="description",
+                    )
                     n_obs += 1
                 if place.strip():
                     mem.add(place, x=float(pos[0]), y=float(pos[1]), layer_name="place")
@@ -154,11 +169,18 @@ class HarnessRunner:
                 n_ep += 1
                 frame, pos = env.reset()
                 intero.reset()
-                log.info("[step %d/%d] Episode done, starting #%d", step, self._n_steps, n_ep)
+                log.info(
+                    "[step %d/%d] Episode done, starting #%d", step, self._n_steps, n_ep
+                )
 
         mem.end_episode()
         ingestion_time = time.monotonic() - t_ingest
-        log.info("Ingestion complete: %d obs + %d body in %.1fs", n_obs, n_body, ingestion_time)
+        log.info(
+            "Ingestion complete: %d obs + %d body in %.1fs",
+            n_obs,
+            n_body,
+            ingestion_time,
+        )
 
         # -- Evaluation --
         log.info("=== Evaluation: %d queries ===", len(self._queries))
@@ -170,12 +192,21 @@ class HarnessRunner:
             t0 = time.monotonic()
             result = agent.run(bq.query)
             latency = time.monotonic() - t0
-            log.info("  tools=%s (%.1fs): %s", result.tools_used, latency, (result.answer or "")[:80])
+            log.info(
+                "  tools=%s (%.1fs): %s",
+                result.tools_used,
+                latency,
+                (result.answer or "")[:80],
+            )
 
-            query_results.append(QueryResult(
-                query=bq, tools_used=result.tools_used,
-                answer=result.answer, latency_s=latency,
-            ))
+            query_results.append(
+                QueryResult(
+                    query=bq,
+                    tools_used=result.tools_used,
+                    answer=result.answer,
+                    latency_s=latency,
+                )
+            )
 
         metrics = compute_metrics(
             query_results,
@@ -188,9 +219,13 @@ class HarnessRunner:
         mem.close()
 
         return HarnessReport(
-            metrics=metrics, n_steps=self._n_steps, n_episodes=n_ep,
-            n_observations=n_obs, n_body_states=n_body,
-            ingestion_time_s=ingestion_time, query_results=metrics.per_query,
+            metrics=metrics,
+            n_steps=self._n_steps,
+            n_episodes=n_ep,
+            n_observations=n_obs,
+            n_body_states=n_body,
+            ingestion_time_s=ingestion_time,
+            query_results=metrics.per_query,
         )
 
     def _make_env(self) -> Any:
@@ -237,11 +272,15 @@ class HarnessRunner:
                 {"model": self._llm_model, "api_key": key},
             )
 
-        raise ValueError(f"Unknown provider: {self._provider!r}. Use 'ollama' or 'gemini'.")
+        raise ValueError(
+            f"Unknown provider: {self._provider!r}. Use 'ollama' or 'gemini'."
+        )
 
     def _make_agent(self, mem: Any, kwargs: dict) -> Any:
         if self._provider == "gemini":
             from harness.agent.react_agent import GeminiReactAgent
+
             return GeminiReactAgent(mem, **kwargs)
         from harness.agent.react_agent import ReactAgent
+
         return ReactAgent(mem, **kwargs)

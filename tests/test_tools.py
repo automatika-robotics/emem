@@ -250,7 +250,9 @@ class TestCurrentContextWithGists:
 
 class TestDispatch:
     def test_dispatch_known_tool(self, tools):
-        result = tools.dispatch_tool_call("episode_summary", {"task_name": "nonexistent"})
+        result = tools.dispatch_tool_call(
+            "episode_summary", {"task_name": "nonexistent"}
+        )
         assert "No episodes" in result
 
     def test_dispatch_unknown_tool(self, tools):
@@ -267,9 +269,16 @@ class TestToolDefinitions:
             assert "name" in d["function"]
         names = {d["function"]["name"] for d in defs}
         assert names == {
-            "semantic_search", "spatial_query", "temporal_query",
-            "episode_summary", "get_current_context", "search_gists",
-            "entity_query", "locate", "recall", "body_status",
+            "semantic_search",
+            "spatial_query",
+            "temporal_query",
+            "episode_summary",
+            "get_current_context",
+            "search_gists",
+            "entity_query",
+            "locate",
+            "recall",
+            "body_status",
         }
 
 
@@ -341,8 +350,12 @@ class TestCurrentContextWithEntities:
 
 class TestContextGrouping:
     def test_groups_nearby_by_layer(self, store, tools):
-        store.add_observation(_obs("white cabinets", x=5.0, y=5.0, ts=1500.0, layer="vlm"))
-        store.add_observation(_obs("chair, table", x=5.0, y=5.0, ts=1500.0, layer="detections"))
+        store.add_observation(
+            _obs("white cabinets", x=5.0, y=5.0, ts=1500.0, layer="vlm")
+        )
+        store.add_observation(
+            _obs("chair, table", x=5.0, y=5.0, ts=1500.0, layer="detections")
+        )
         store.add_observation(_obs("kitchen", x=5.0, y=5.0, ts=1500.0, layer="place"))
 
         result = tools.get_current_context(radius=3.0)
@@ -402,8 +415,12 @@ class TestLocate:
 
 class TestRecall:
     def test_basic_recall(self, store, tools):
-        store.add_observation(_obs("kitchen with white cabinets", x=10.0, y=10.0, ts=1500.0, layer="vlm"))
-        store.add_observation(_obs("chair, table, fridge", x=10.0, y=10.0, ts=1500.0, layer="detections"))
+        store.add_observation(
+            _obs("kitchen with white cabinets", x=10.0, y=10.0, ts=1500.0, layer="vlm")
+        )
+        store.add_observation(
+            _obs("chair, table, fridge", x=10.0, y=10.0, ts=1500.0, layer="detections")
+        )
         entity = EntityNode(
             name="refrigerator",
             coordinates=np.array([10.0, 10.0, 0.0]),

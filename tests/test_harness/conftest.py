@@ -16,30 +16,22 @@ def pytest_collection_modifyitems(config, items):
             if ollama_available is None:
                 ollama_available = _check_ollama()
             if not ollama_available:
-                item.add_marker(
-                    pytest.mark.skip(reason="Ollama server not available")
-                )
+                item.add_marker(pytest.mark.skip(reason="Ollama server not available"))
         if "minigrid" in item.keywords:
             if minigrid_available is None:
                 minigrid_available = _check_minigrid()
             if not minigrid_available:
-                item.add_marker(
-                    pytest.mark.skip(reason="minigrid not installed")
-                )
+                item.add_marker(pytest.mark.skip(reason="minigrid not installed"))
         if "gemini" in item.keywords:
             if gemini_available is None:
                 gemini_available = _check_gemini()
             if not gemini_available:
-                item.add_marker(
-                    pytest.mark.skip(reason="GEMINI_API_KEY not set")
-                )
+                item.add_marker(pytest.mark.skip(reason="GEMINI_API_KEY not set"))
         if "ai2thor" in item.keywords:
             if ai2thor_available is None:
                 ai2thor_available = _check_ai2thor()
             if not ai2thor_available:
-                item.add_marker(
-                    pytest.mark.skip(reason="ai2thor not installed")
-                )
+                item.add_marker(pytest.mark.skip(reason="ai2thor not installed"))
 
 
 def _check_ollama() -> bool:

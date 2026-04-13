@@ -4,8 +4,12 @@ import numpy as np
 
 
 class EmbeddingProvider(Protocol):
+    """Protocol describing an embedding backend used by the memory system."""
+
     @property
-    def dim(self) -> int: ...
+    def dim(self) -> int:
+        """Embedding vector dimension produced by this provider."""
+        ...
 
     def embed(self, texts: List[str]) -> np.ndarray:
         """Embed a list of texts.
@@ -25,9 +29,11 @@ class NullEmbeddingProvider:
 
     @property
     def dim(self) -> int:
+        """Embedding dimension."""
         return self._dim
 
     def embed(self, texts: List[str]) -> np.ndarray:
+        """Return zero vectors of shape ``(len(texts), dim)``."""
         return np.zeros((len(texts), self._dim), dtype=np.float32)
 
 
@@ -64,9 +70,11 @@ class CallableEmbeddingProvider:
 
     @property
     def dim(self) -> int:
+        """Embedding dimension."""
         return self._dim
 
     def embed(self, texts: List[str]) -> np.ndarray:
+        """Embed *texts* with the wrapped callable and return a float32 array."""
         if not texts:
             return np.empty((0, self._dim), dtype=np.float32)
         result = self._fn(texts)
@@ -79,17 +87,19 @@ class SentenceTransformerProvider:
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
         try:
             from sentence_transformers import SentenceTransformer
-        except ImportError:
+        except ImportError as err:
             raise ImportError(
                 "sentence-transformers is required for SentenceTransformerProvider. "
                 "Install with: pip install emem[embeddings]"
-            )
+            ) from err
         self._model = SentenceTransformer(model_name)
         self._dim = self._model.get_sentence_embedding_dimension()
 
     @property
     def dim(self) -> int:
+        """Embedding dimension reported by the underlying model."""
         return self._dim
 
     def embed(self, texts: List[str]) -> np.ndarray:
+        """Encode *texts* using the wrapped sentence-transformers model."""
         return self._model.encode(texts, convert_to_numpy=True).astype(np.float32)

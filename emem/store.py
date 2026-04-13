@@ -35,8 +35,12 @@ class MemoryStore:
         embedding_provider: Optional[EmbeddingProvider] = None,
     ) -> None:
         self.config = config or SpatioTemporalMemoryConfig()
-        self.embedding_provider = embedding_provider or NullEmbeddingProvider(self.config.embedding_dim)
-        self._auto_embed = not isinstance(self.embedding_provider, NullEmbeddingProvider)
+        self.embedding_provider = embedding_provider or NullEmbeddingProvider(
+            self.config.embedding_dim
+        )
+        self._auto_embed = not isinstance(
+            self.embedding_provider, NullEmbeddingProvider
+        )
         self._lock = threading.Lock()
 
         # SQLite
@@ -53,7 +57,9 @@ class MemoryStore:
         self._hnsw_str_map: Dict[str, int] = {}
         self._hnsw_counter = 0
         if self._hnsw_path.exists():
-            self._hnsw.load_index(str(self._hnsw_path), max_elements=self.config.hnsw_max_elements)
+            self._hnsw.load_index(
+                str(self._hnsw_path), max_elements=self.config.hnsw_max_elements
+            )
             self._load_hnsw_mappings()
         else:
             self._hnsw.init_index(
@@ -167,7 +173,9 @@ class MemoryStore:
 
         # Migration: add entities_extracted column if missing
         try:
-            self._db.execute("ALTER TABLE observations ADD COLUMN entities_extracted INTEGER NOT NULL DEFAULT 0")
+            self._db.execute(
+                "ALTER TABLE observations ADD COLUMN entities_extracted INTEGER NOT NULL DEFAULT 0"
+            )
             self._db.commit()
         except sqlite3.OperationalError:
             pass  # Column already exists
@@ -205,14 +213,16 @@ class MemoryStore:
             f"(({x_col} - ?) * ({x_col} - ?) + ({y_col} - ?) * ({y_col} - ?) "
             f"+ ({z_col} - ?) * ({z_col} - ?)) <= ?"
         )
-        params = [x, x, y, y, z, z, radius ** 2]
+        params = [x, x, y, y, z, z, radius**2]
         return clause, params
 
     def _next_hnsw_id(self) -> int:
         self._hnsw_counter += 1
         return self._hnsw_counter
 
-    def _add_to_hnsw(self, str_id: str, embedding: np.ndarray, node_type: str = "observation") -> None:
+    def _add_to_hnsw(
+        self, str_id: str, embedding: np.ndarray, node_type: str = "observation"
+    ) -> None:
         # Remove old entry if re-inserting
         if str_id in self._hnsw_str_map:
             self._remove_from_hnsw(str_id)
@@ -221,7 +231,9 @@ class MemoryStore:
         self._hnsw_id_map[int_id] = str_id
         self._hnsw_str_map[str_id] = int_id
         if self._hnsw.get_current_count() >= self._hnsw.get_max_elements() - 1:
-            self._hnsw.resize_index(self._hnsw.get_max_elements() + self.config.hnsw_max_elements)
+            self._hnsw.resize_index(
+                self._hnsw.get_max_elements() + self.config.hnsw_max_elements
+            )
         self._hnsw.add_items(embedding.reshape(1, -1), np.array([int_id]))
         self._db.execute(
             "INSERT OR REPLACE INTO hnsw_mappings (int_id, str_id, node_type) VALUES (?, ?, ?)",
@@ -245,9 +257,13 @@ class MemoryStore:
         ids = []
         with self._lock:
             # Batch embed observations that need it
-            needs_embed = [o for o in observations if o.embedding is None and self._auto_embed]
+            needs_embed = [
+                o for o in observations if o.embedding is None and self._auto_embed
+            ]
             if needs_embed:
-                embeddings = self.embedding_provider.embed([o.text for o in needs_embed])
+                embeddings = self.embedding_provider.embed([
+                    o.text for o in needs_embed
+                ])
                 for o, emb in zip(needs_embed, embeddings):
                     o.embedding = emb
 
@@ -260,9 +276,21 @@ class MemoryStore:
                        (id, text, x, y, z, timestamp, layer_name, source_type,
                         confidence, episode_id, metadata, tier, has_embedding)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (obs.id, obs.text, x, y, z, obs.timestamp, obs.layer_name,
-                     obs.source_type, obs.confidence, obs.episode_id,
-                     json.dumps(obs.metadata), obs.tier, has_emb),
+                    (
+                        obs.id,
+                        obs.text,
+                        x,
+                        y,
+                        z,
+                        obs.timestamp,
+                        obs.layer_name,
+                        obs.source_type,
+                        obs.confidence,
+                        obs.episode_id,
+                        json.dumps(obs.metadata),
+                        obs.tier,
+                        has_emb,
+                    ),
                 )
 
                 if obs.embedding is not None:
@@ -271,11 +299,13 @@ class MemoryStore:
                 self._spatial.insert(obs.id, np.array([x, y, z]))
 
                 if obs.episode_id:
-                    self._add_edge(Edge(
-                        source_id=obs.id,
-                        target_id=obs.episode_id,
-                        edge_type=EdgeType.BELONGS_TO,
-                    ))
+                    self._add_edge(
+                        Edge(
+                            source_id=obs.id,
+                            target_id=obs.episode_id,
+                            edge_type=EdgeType.BELONGS_TO,
+                        )
+                    )
                 ids.append(obs.id)
 
             self._db.commit()
@@ -299,15 +329,26 @@ class MemoryStore:
                 """INSERT INTO episodes (id, name, start_time, end_time, status, gist,
                    has_gist_embedding, parent_episode_id, metadata)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (ep.id, ep.name, ep.start_time, ep.end_time, ep.status, ep.gist,
-                 0, ep.parent_episode_id, json.dumps(ep.metadata)),
+                (
+                    ep.id,
+                    ep.name,
+                    ep.start_time,
+                    ep.end_time,
+                    ep.status,
+                    ep.gist,
+                    0,
+                    ep.parent_episode_id,
+                    json.dumps(ep.metadata),
+                ),
             )
             if parent_episode_id:
-                self._add_edge(Edge(
-                    source_id=ep.id,
-                    target_id=parent_episode_id,
-                    edge_type=EdgeType.SUBTASK_OF,
-                ))
+                self._add_edge(
+                    Edge(
+                        source_id=ep.id,
+                        target_id=parent_episode_id,
+                        edge_type=EdgeType.SUBTASK_OF,
+                    )
+                )
             self._db.commit()
         return ep.id
 
@@ -346,21 +387,34 @@ class MemoryStore:
                     source_observation_count, source_observation_ids,
                     layer_name, episode_id, has_embedding)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (gist.id, gist.text, cx, cy, cz, gist.radius,
-                 gist.time_start, gist.time_end, gist.source_observation_count,
-                 json.dumps(gist.source_observation_ids), gist.layer_name,
-                 gist.episode_id, has_emb),
+                (
+                    gist.id,
+                    gist.text,
+                    cx,
+                    cy,
+                    cz,
+                    gist.radius,
+                    gist.time_start,
+                    gist.time_end,
+                    gist.source_observation_count,
+                    json.dumps(gist.source_observation_ids),
+                    gist.layer_name,
+                    gist.episode_id,
+                    has_emb,
+                ),
             )
 
             if gist.embedding is not None:
                 self._add_to_hnsw(gist.id, gist.embedding, "gist")
 
             for obs_id in gist.source_observation_ids:
-                self._add_edge(Edge(
-                    source_id=gist.id,
-                    target_id=obs_id,
-                    edge_type=EdgeType.SUMMARIZES,
-                ))
+                self._add_edge(
+                    Edge(
+                        source_id=gist.id,
+                        target_id=obs_id,
+                        edge_type=EdgeType.SUMMARIZES,
+                    )
+                )
 
             self._db.commit()
         return gist.id
@@ -368,11 +422,19 @@ class MemoryStore:
     def _add_edge(self, edge: Edge) -> str:
         self._db.execute(
             "INSERT OR REPLACE INTO edges (id, source_id, target_id, edge_type, metadata) VALUES (?, ?, ?, ?, ?)",
-            (edge.id, edge.source_id, edge.target_id, edge.edge_type.value, json.dumps(edge.metadata)),
+            (
+                edge.id,
+                edge.source_id,
+                edge.target_id,
+                edge.edge_type.value,
+                json.dumps(edge.metadata),
+            ),
         )
         return edge.id
 
-    def update_observation_tiers(self, obs_ids: List[str], tier: str, drop_text: bool = False) -> None:
+    def update_observation_tiers(
+        self, obs_ids: List[str], tier: str, drop_text: bool = False
+    ) -> None:
         """Batch update tier for multiple observations in a single transaction.
 
         :param obs_ids: Observation IDs to update.
@@ -387,9 +449,13 @@ class MemoryStore:
                         (tier, obs_id),
                     )
                     self._remove_from_hnsw(obs_id)
-                    row = self._db.execute("SELECT x, y, z FROM observations WHERE id = ?", (obs_id,)).fetchone()
+                    row = self._db.execute(
+                        "SELECT x, y, z FROM observations WHERE id = ?", (obs_id,)
+                    ).fetchone()
                     if row:
-                        self._spatial.delete(obs_id, np.array([row["x"], row["y"], row["z"]]))
+                        self._spatial.delete(
+                            obs_id, np.array([row["x"], row["y"], row["z"]])
+                        )
                 else:
                     self._db.execute(
                         "UPDATE observations SET tier = ? WHERE id = ?",
@@ -397,7 +463,9 @@ class MemoryStore:
                     )
             self._db.commit()
 
-    def update_observation_tier(self, obs_id: str, tier: str, drop_text: bool = False) -> None:
+    def update_observation_tier(
+        self, obs_id: str, tier: str, drop_text: bool = False
+    ) -> None:
         self.update_observation_tiers([obs_id], tier, drop_text)
 
     def mark_entities_extracted(self, obs_ids: List[str]) -> None:
@@ -453,10 +521,21 @@ class MemoryStore:
                     observation_count, confidence, entity_type, layer_name,
                     metadata, has_embedding)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (entity.id, entity.name, x, y, z, entity.last_seen,
-                 entity.first_seen, entity.observation_count, entity.confidence,
-                 entity.entity_type, entity.layer_name,
-                 json.dumps(entity.metadata), has_emb),
+                (
+                    entity.id,
+                    entity.name,
+                    x,
+                    y,
+                    z,
+                    entity.last_seen,
+                    entity.first_seen,
+                    entity.observation_count,
+                    entity.confidence,
+                    entity.entity_type,
+                    entity.layer_name,
+                    json.dumps(entity.metadata),
+                    has_emb,
+                ),
             )
 
             if entity.embedding is not None:
@@ -467,15 +546,21 @@ class MemoryStore:
         return entity.id
 
     def get_entity(self, entity_id: str) -> Optional[EntityNode]:
-        row = self._db.execute("SELECT * FROM entities WHERE id = ?", (entity_id,)).fetchone()
+        row = self._db.execute(
+            "SELECT * FROM entities WHERE id = ?", (entity_id,)
+        ).fetchone()
         return self._row_to_entity(row) if row else None
 
     def update_entity(self, entity: EntityNode) -> None:
         with self._lock:
             # Remove old spatial entry
-            old_row = self._db.execute("SELECT x, y, z FROM entities WHERE id = ?", (entity.id,)).fetchone()
+            old_row = self._db.execute(
+                "SELECT x, y, z FROM entities WHERE id = ?", (entity.id,)
+            ).fetchone()
             if old_row:
-                self._spatial.delete(entity.id, np.array([old_row["x"], old_row["y"], old_row["z"]]))
+                self._spatial.delete(
+                    entity.id, np.array([old_row["x"], old_row["y"], old_row["z"]])
+                )
 
             x, y, z = _to_xyz(entity.coordinates)
 
@@ -490,10 +575,21 @@ class MemoryStore:
                    confidence = ?, entity_type = ?, layer_name = ?,
                    metadata = ?, has_embedding = ?
                    WHERE id = ?""",
-                (entity.name, x, y, z, entity.last_seen, entity.first_seen,
-                 entity.observation_count, entity.confidence, entity.entity_type,
-                 entity.layer_name, json.dumps(entity.metadata), has_emb,
-                 entity.id),
+                (
+                    entity.name,
+                    x,
+                    y,
+                    z,
+                    entity.last_seen,
+                    entity.first_seen,
+                    entity.observation_count,
+                    entity.confidence,
+                    entity.entity_type,
+                    entity.layer_name,
+                    json.dumps(entity.metadata),
+                    has_emb,
+                    entity.id,
+                ),
             )
 
             if entity.embedding is not None:
@@ -515,7 +611,9 @@ class MemoryStore:
             live_count = len(self._hnsw_id_map)
             if live_count > 0:
                 fetch_k = min(20, live_count)
-                labels, distances = self._hnsw.knn_query(embedding.reshape(1, -1), k=fetch_k)
+                labels, distances = self._hnsw.knn_query(
+                    embedding.reshape(1, -1), k=fetch_k
+                )
 
                 # Resolve all candidate IDs and their types in one batch
                 candidate_ids = []
@@ -529,7 +627,8 @@ class MemoryStore:
                 if candidate_ids:
                     ph = ",".join("?" * len(candidate_ids))
                     type_rows = self._db.execute(
-                        "SELECT str_id, node_type FROM hnsw_mappings WHERE str_id IN (%s)" % ph,
+                        "SELECT str_id, node_type FROM hnsw_mappings WHERE str_id IN (%s)"
+                        % ph,
                         candidate_ids,
                     ).fetchall()
                     type_map = {r["str_id"]: r["node_type"] for r in type_rows}
@@ -544,13 +643,16 @@ class MemoryStore:
                         entity = self.get_entity(str_id)
                         if entity is None:
                             continue
-                        dist_spatial = float(np.linalg.norm(entity.coordinates - coords_xyz))
+                        dist_spatial = float(
+                            np.linalg.norm(entity.coordinates - coords_xyz)
+                        )
                         if dist_spatial <= self.config.entity_spatial_radius:
                             return entity
 
         # Fallback: exact name match within spatial radius
         clause, dist_params = self._spatial_filter_sql(
-            coordinates, self.config.entity_spatial_radius,
+            coordinates,
+            self.config.entity_spatial_radius,
         )
         rows = self._db.execute(
             "SELECT * FROM entities WHERE name = ? AND " + clause,
@@ -578,7 +680,9 @@ class MemoryStore:
             query += " AND entity_type = ?"
             params.append(entity_type)
         if near_coordinates is not None and spatial_radius is not None:
-            clause, dist_params = self._spatial_filter_sql(near_coordinates, spatial_radius)
+            clause, dist_params = self._spatial_filter_sql(
+                near_coordinates, spatial_radius
+            )
             query += " AND " + clause
             params.extend(dist_params)
         if last_seen_after is not None:
@@ -596,13 +700,16 @@ class MemoryStore:
             return []
         placeholders = ",".join("?" * len(obs_ids))
         rows = self._db.execute(
-            "SELECT * FROM observations WHERE id IN (%s) ORDER BY timestamp" % placeholders,
+            "SELECT * FROM observations WHERE id IN (%s) ORDER BY timestamp"
+            % placeholders,
             obs_ids,
         ).fetchall()
         return [self._row_to_observation(r) for r in rows]
 
     def get_cooccurring_entities(self, entity_id: str) -> List[EntityNode]:
-        edges_out = self.get_edges(source_id=entity_id, edge_type=EdgeType.COOCCURS_WITH)
+        edges_out = self.get_edges(
+            source_id=entity_id, edge_type=EdgeType.COOCCURS_WITH
+        )
         edges_in = self.get_edges(target_id=entity_id, edge_type=EdgeType.COOCCURS_WITH)
         related_ids = set()
         for e in edges_out:
@@ -675,15 +782,21 @@ class MemoryStore:
         )
 
     def get_observation(self, obs_id: str) -> Optional[ObservationNode]:
-        row = self._db.execute("SELECT * FROM observations WHERE id = ?", (obs_id,)).fetchone()
+        row = self._db.execute(
+            "SELECT * FROM observations WHERE id = ?", (obs_id,)
+        ).fetchone()
         return self._row_to_observation(row) if row else None
 
     def get_episode(self, episode_id: str) -> Optional[EpisodeNode]:
-        row = self._db.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchone()
+        row = self._db.execute(
+            "SELECT * FROM episodes WHERE id = ?", (episode_id,)
+        ).fetchone()
         return self._row_to_episode(row) if row else None
 
     def get_gist(self, gist_id: str) -> Optional[GistNode]:
-        row = self._db.execute("SELECT * FROM gists WHERE id = ?", (gist_id,)).fetchone()
+        row = self._db.execute(
+            "SELECT * FROM gists WHERE id = ?", (gist_id,)
+        ).fetchone()
         return self._row_to_gist(row) if row else None
 
     def get_episode_observations(self, episode_id: str) -> List[ObservationNode]:
@@ -747,11 +860,17 @@ class MemoryStore:
         """
         query_emb = self.embedding_provider.embed([query])[0]
         return self.semantic_search_by_vector(
-            query_emb, n_results, layer, time_range, spatial_center, spatial_radius,
-            episode_id, reference_time,
+            query_emb,
+            n_results,
+            layer,
+            time_range,
+            spatial_center,
+            spatial_radius,
+            episode_id,
+            reference_time,
         )
 
-    def semantic_search_by_vector(
+    def semantic_search_by_vector(  # noqa: C901  # TODO: split into helpers
         self,
         query_vector: np.ndarray,
         n_results: int = 5,
@@ -797,7 +916,8 @@ class MemoryStore:
         # Partition candidates by node type
         placeholders = ",".join("?" * len(candidate_ids))
         type_rows = self._db.execute(
-            "SELECT str_id, node_type FROM hnsw_mappings WHERE str_id IN (%s)" % placeholders,
+            "SELECT str_id, node_type FROM hnsw_mappings WHERE str_id IN (%s)"
+            % placeholders,
             candidate_ids,
         ).fetchall()
         type_map = {r["str_id"]: r["node_type"] for r in type_rows}
@@ -832,7 +952,9 @@ class MemoryStore:
                 obs_sql += " AND episode_id = ?"
                 obs_params.append(episode_id)
             if spatial_center is not None and spatial_radius is not None:
-                clause, dist_params = self._spatial_filter_sql(spatial_center, spatial_radius)
+                clause, dist_params = self._spatial_filter_sql(
+                    spatial_center, spatial_radius
+                )
                 obs_sql += " AND " + clause
                 obs_params.extend(dist_params)
 
@@ -859,7 +981,11 @@ class MemoryStore:
                 gist_params.append(episode_id)
             if spatial_center is not None and spatial_radius is not None:
                 clause, dist_params = self._spatial_filter_sql(
-                    spatial_center, spatial_radius, x_col="cx", y_col="cy", z_col="cz",
+                    spatial_center,
+                    spatial_radius,
+                    x_col="cx",
+                    y_col="cy",
+                    z_col="cz",
                 )
                 gist_sql += " AND " + clause
                 gist_params.extend(dist_params)
@@ -880,7 +1006,9 @@ class MemoryStore:
                 ent_sql += " AND last_seen >= ? AND last_seen <= ?"
                 ent_params.extend(time_range)
             if spatial_center is not None and spatial_radius is not None:
-                clause, dist_params = self._spatial_filter_sql(spatial_center, spatial_radius)
+                clause, dist_params = self._spatial_filter_sql(
+                    spatial_center, spatial_radius
+                )
                 ent_sql += " AND " + clause
                 ent_params.extend(dist_params)
 
@@ -942,7 +1070,10 @@ class MemoryStore:
             return []
 
         placeholders = ",".join("?" * len(candidate_ids))
-        query = "SELECT * FROM observations WHERE id IN (%s) AND tier != 'archived'" % placeholders
+        query = (
+            "SELECT * FROM observations WHERE id IN (%s) AND tier != 'archived'"
+            % placeholders
+        )
         params: list = list(candidate_ids)
 
         if layer:
@@ -980,7 +1111,8 @@ class MemoryStore:
             return []
         placeholders = ",".join("?" * len(candidate_ids))
         rows = self._db.execute(
-            "SELECT * FROM observations WHERE id IN (%s) AND tier != 'archived'" % placeholders,
+            "SELECT * FROM observations WHERE id IN (%s) AND tier != 'archived'"
+            % placeholders,
             candidate_ids,
         ).fetchall()
         results = [self._row_to_observation(r) for r in rows]
@@ -1035,7 +1167,9 @@ class MemoryStore:
             query += " AND source_type != ?"
             params.append(exclude_source_type)
         if spatial_center is not None and spatial_radius is not None:
-            clause, dist_params = self._spatial_filter_sql(spatial_center, spatial_radius)
+            clause, dist_params = self._spatial_filter_sql(
+                spatial_center, spatial_radius
+            )
             query += " AND " + clause
             params.extend(dist_params)
 
@@ -1108,7 +1242,7 @@ class MemoryStore:
             return []
 
         fetch_k = min(n_results * 5, self._hnsw.get_current_count())
-        labels, distances = self._hnsw.knn_query(query_emb.reshape(1, -1), k=fetch_k)
+        labels, _ = self._hnsw.knn_query(query_emb.reshape(1, -1), k=fetch_k)
 
         candidate_ids = []
         for label in labels[0]:
@@ -1148,7 +1282,11 @@ class MemoryStore:
         :rtype: List[GistNode]
         """
         clause, dist_params = self._spatial_filter_sql(
-            center, radius, x_col="cx", y_col="cy", z_col="cz",
+            center,
+            radius,
+            x_col="cx",
+            y_col="cy",
+            z_col="cz",
         )
         rows = self._db.execute(
             "SELECT * FROM gists WHERE " + clause + " LIMIT ?",
@@ -1234,14 +1372,23 @@ class MemoryStore:
             query += " AND edge_type = ?"
             params.append(edge_type.value)
         rows = self._db.execute(query, params).fetchall()
-        return [Edge(
-            id=r["id"], source_id=r["source_id"], target_id=r["target_id"],
-            edge_type=EdgeType(r["edge_type"]), metadata=json.loads(r["metadata"]),
-        ) for r in rows]
+        return [
+            Edge(
+                id=r["id"],
+                source_id=r["source_id"],
+                target_id=r["target_id"],
+                edge_type=EdgeType(r["edge_type"]),
+                metadata=json.loads(r["metadata"]),
+            )
+            for r in rows
+        ]
 
     def count_observations(self, tier: Optional[str] = None) -> int:
+        """Return the total observation count, optionally filtered by *tier*."""
         if tier:
-            return self._db.execute("SELECT COUNT(*) FROM observations WHERE tier = ?", (tier,)).fetchone()[0]
+            return self._db.execute(
+                "SELECT COUNT(*) FROM observations WHERE tier = ?", (tier,)
+            ).fetchone()[0]
         return self._db.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
 
     def save(self) -> None:
@@ -1250,5 +1397,6 @@ class MemoryStore:
         self._db.commit()
 
     def close(self) -> None:
+        """Persist all state and close the underlying database connection."""
         self.save()
         self._db.close()

@@ -102,8 +102,8 @@ def _is_valid_place(place: str) -> bool:
 
 
 _GARBAGE_DETECTION_RE = re.compile(
-    r"^[^a-zA-Z]*$"          # no letters at all (operators, numbers)
-    r"|^.{1,2}$"             # too short (single/double chars)
+    r"^[^a-zA-Z]*$"  # no letters at all (operators, numbers)
+    r"|^.{1,2}$"  # too short (single/double chars)
     r"|^background$"
     r"|^architectural"
     r"|^color"
@@ -124,6 +124,7 @@ def _is_valid_detection(item: str) -> bool:
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
+
 
 def _format_object_name(object_type: str) -> str:
     """Convert CamelCase AI2-THOR object type to readable name.
@@ -173,7 +174,8 @@ def _find_place_at_time(
     if not trajectory:
         return ""
     closest = min(
-        trajectory, key=lambda f: abs(f.get("timestamp", 0) - timestamp),
+        trajectory,
+        key=lambda f: abs(f.get("timestamp", 0) - timestamp),
     )
     place = closest.get("layers", {}).get("place", "").strip().lower()
     if _is_valid_place(place):
@@ -255,6 +257,7 @@ def _shortest_valid_caption(
 
 # ── Question templates ───────────────────────────────────────────────
 
+
 def _spatial_questions(
     objects: List[Dict[str, Any]],
     trajectory: List[Dict[str, Any]],
@@ -268,10 +271,7 @@ def _spatial_questions(
     questions: List[Dict[str, Any]] = []
 
     # Filter out structural objects
-    objects = [
-        o for o in objects
-        if o.get("objectType") not in STRUCTURAL_OBJECTS
-    ]
+    objects = [o for o in objects if o.get("objectType") not in STRUCTURAL_OBJECTS]
 
     # "Where is X?" questions
     visible_objects = [o for o in objects if o.get("visible")]
@@ -302,9 +302,12 @@ def _spatial_questions(
             wp = random.choice(trajectory)
             pos = wp.get("position", [0, 0, 0])
             nearby = [
-                o for o in objects
-                if math.sqrt((o.get("position", [0, 0, 0])[0] - pos[0]) ** 2
-                             + (o.get("position", [0, 0, 0])[1] - pos[1]) ** 2)
+                o
+                for o in objects
+                if math.sqrt(
+                    (o.get("position", [0, 0, 0])[0] - pos[0]) ** 2
+                    + (o.get("position", [0, 0, 0])[1] - pos[1]) ** 2
+                )
                 <= 2.0
             ]
             if nearby:
@@ -313,8 +316,7 @@ def _spatial_questions(
                 )
                 questions.append({
                     "question": (
-                        f"What objects are near "
-                        f"({pos[0]:.1f}, {pos[1]:.1f})?"
+                        f"What objects are near " f"({pos[0]:.1f}, {pos[1]:.1f})?"
                     ),
                     "answer": obj_names,
                     "category": "spatial",
@@ -367,9 +369,7 @@ def _temporal_questions(
     first_vlm = first_frame.get("layers", {}).get("vlm", "")
     if _is_valid_caption(first_vlm):
         questions.append({
-            "question": (
-                "What did I observe at the beginning of my exploration?"
-            ),
+            "question": ("What did I observe at the beginning of my exploration?"),
             "answer": first_vlm,
             "category": "temporal",
             "tools_expected": ["temporal_query"],
@@ -379,8 +379,11 @@ def _temporal_questions(
     sampled_items_seen: Set[str] = set()
     for frame in random.sample(trajectory, min(5, len(trajectory))):
         detections = frame.get("layers", {}).get("detections", "")
-        items = [d.strip() for d in detections.split(",")
-                 if d.strip() and _is_valid_detection(d.strip())]
+        items = [
+            d.strip()
+            for d in detections.split(",")
+            if d.strip() and _is_valid_detection(d.strip())
+        ]
         if not items:
             continue
         obj = random.choice(items)
@@ -402,17 +405,15 @@ def _temporal_questions(
             pos = last_frame_found.get("position", [0, 0, 0])
             place = _find_place_near(trajectory, pos[0], pos[1])
             pos_label = _trajectory_position_label(
-                last_idx, len(trajectory),
+                last_idx,
+                len(trajectory),
             )
             if place:
                 answer = (
-                    f"{pos_label}, at ({pos[0]:.1f}, {pos[1]:.1f}) "
-                    f"in the {place}"
+                    f"{pos_label}, at ({pos[0]:.1f}, {pos[1]:.1f}) " f"in the {place}"
                 )
             else:
-                answer = (
-                    f"{pos_label}, at ({pos[0]:.1f}, {pos[1]:.1f})"
-                )
+                answer = f"{pos_label}, at ({pos[0]:.1f}, {pos[1]:.1f})"
             questions.append({
                 "question": f"When did I last see the {obj}?",
                 "answer": answer,
@@ -467,14 +468,13 @@ def _cross_layer_questions(
         all_items: Set[str] = set()
         for det in det_lists:
             all_items.update(
-                d.strip() for d in det.split(",")
+                d.strip()
+                for d in det.split(",")
                 if d.strip() and _is_valid_detection(d.strip())
             )
         if all_items:
             questions.append({
-                "question": (
-                    f"What objects were detected in the {place}?"
-                ),
+                "question": (f"What objects were detected in the {place}?"),
                 "answer": ", ".join(sorted(all_items)[:8]),
                 "category": "cross_layer",
                 "tools_expected": ["semantic_search"],
@@ -502,7 +502,7 @@ def _cross_layer_questions(
     return questions
 
 
-def _entity_questions(
+def _entity_questions(  # noqa: C901  # TODO: split into helpers
     objects: List[Dict[str, Any]],
     trajectory: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
@@ -544,15 +544,11 @@ def _entity_questions(
         pos = info.get("position", [0, 0, 0])
         place = _find_place_near(trajectory, pos[0], pos[1])
         if place:
-            answer = (
-                f"Yes, near ({pos[0]:.1f}, {pos[1]:.1f}) in the {place}"
-            )
+            answer = f"Yes, near ({pos[0]:.1f}, {pos[1]:.1f}) in the {place}"
         else:
             answer = f"Yes, near ({pos[0]:.1f}, {pos[1]:.1f})"
         questions.append({
-            "question": (
-                f"Have you seen {obj_name} during your exploration?"
-            ),
+            "question": (f"Have you seen {obj_name} during your exploration?"),
             "answer": answer,
             "category": "entity",
             "tools_expected": ["entity_query", "semantic_search"],
@@ -591,9 +587,7 @@ def _entity_questions(
             else:
                 answer = "No, rarely"
             questions.append({
-                "question": (
-                    f"Is {obj_name} a common object in the scene?"
-                ),
+                "question": (f"Is {obj_name} a common object in the scene?"),
                 "answer": answer,
                 "category": "entity",
                 "tools_expected": ["entity_query", "semantic_search"],
@@ -602,15 +596,16 @@ def _entity_questions(
     # "What objects appear together with X?"
     for frame in random.sample(trajectory, min(3, len(trajectory))):
         detections = frame.get("layers", {}).get("detections", "")
-        items = [d.strip() for d in detections.split(",")
-                 if d.strip() and _is_valid_detection(d.strip())]
+        items = [
+            d.strip()
+            for d in detections.split(",")
+            if d.strip() and _is_valid_detection(d.strip())
+        ]
         if len(items) >= 2:
             anchor = items[0]
             cooccur = ", ".join(items[1:4])
             questions.append({
-                "question": (
-                    f"What objects appear together with the {anchor}?"
-                ),
+                "question": (f"What objects appear together with the {anchor}?"),
                 "answer": cooccur,
                 "category": "entity",
                 "tools_expected": ["entity_query", "semantic_search"],
@@ -655,8 +650,7 @@ def _interoception_questions(
         if place:
             questions.append({
                 "question": (
-                    f"What was my CPU temperature when I was in "
-                    f"the {place}?"
+                    f"What was my CPU temperature when I was in " f"the {place}?"
                 ),
                 "answer": cpu,
                 "category": "interoception",
@@ -690,9 +684,7 @@ def _episodic_questions(
     if places_visited:
         questions.append({
             "question": "Summarize what I explored.",
-            "answer": (
-                f"Explored: {', '.join(sorted(places_visited))}"
-            ),
+            "answer": (f"Explored: {', '.join(sorted(places_visited))}"),
             "category": "episodic",
             "tools_expected": ["episode_summary", "search_gists"],
         })
@@ -723,8 +715,7 @@ def _episodic_questions(
         questions.append({
             "question": "What did I do in my last episode?",
             "answer": (
-                "Explored areas including: "
-                f"{', '.join(sorted(places_visited)[:5])}"
+                "Explored areas including: " f"{', '.join(sorted(places_visited)[:5])}"
             ),
             "category": "episodic",
             "tools_expected": ["episode_summary"],
@@ -734,6 +725,7 @@ def _episodic_questions(
 
 
 # ── Top-level generation ─────────────────────────────────────────────
+
 
 def generate_questions_for_sample(
     sample: Dict[str, Any],
@@ -812,7 +804,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     total_questions = 0
     for scene_dir in sorted(os.listdir(args.data_dir)):
         traj_path = os.path.join(
-            args.data_dir, scene_dir, "trajectory.json",
+            args.data_dir,
+            scene_dir,
+            "trajectory.json",
         )
         if not os.path.exists(traj_path):
             continue
@@ -839,7 +833,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         if not found:
             output_dir = os.path.dirname(os.path.abspath(args.output))
             rel_traj = os.path.relpath(
-                os.path.abspath(traj_path), output_dir,
+                os.path.abspath(traj_path),
+                output_dir,
             )
             index.append({
                 "sample_id": sample_id,
@@ -850,7 +845,9 @@ def main(argv: Optional[List[str]] = None) -> None:
             })
 
         log.info(
-            "Scene %s: %d questions generated", scene_dir, len(questions),
+            "Scene %s: %d questions generated",
+            scene_dir,
+            len(questions),
         )
 
     # Write index
@@ -859,7 +856,9 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     log.info(
         "Total: %d questions across %d scenes. Index: %s",
-        total_questions, len(index), args.output,
+        total_questions,
+        len(index),
+        args.output,
     )
 
 

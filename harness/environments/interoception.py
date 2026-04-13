@@ -41,14 +41,19 @@ class SyntheticInteroception:
 
         # Battery: steady drain with noise, never increases
         noise = random.gauss(0, p.battery_noise * p.battery_start)
-        self._battery = max(0.0, min(
-            self._battery, self._battery - p.battery_drain_per_step + noise,
-        ))
+        self._battery = max(
+            0.0,
+            min(
+                self._battery,
+                self._battery - p.battery_drain_per_step + noise,
+            ),
+        )
 
         # CPU temperature: sinusoidal base + random spikes
-        base = p.cpu_base_temp + (p.cpu_temp_range / 2) * (
-            1 + math.sin(self._step / 50.0)
-        ) / 2
+        base = (
+            p.cpu_base_temp
+            + (p.cpu_temp_range / 2) * (1 + math.sin(self._step / 50.0)) / 2
+        )
         if random.random() < p.cpu_spike_prob:
             base += random.uniform(10, 25)
         cpu_temp = min(base, p.cpu_base_temp + p.cpu_temp_range)

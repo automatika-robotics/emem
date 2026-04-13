@@ -88,12 +88,14 @@ def test_full_pipeline(system):
         x = 10.0 + np.random.randn() * 1.0
         y = 10.0 + np.random.randn() * 1.0
         current_pos[0] = np.array([x, y, 0.0])
-        wm.add(ObservationNode(
-            text=f"kitchen_obs_{i}: {'table' if i % 3 == 0 else 'counter' if i % 3 == 1 else 'sink'}",
-            coordinates=np.array([x, y, 0.0]),
-            timestamp=t,
-            layer_name="vlm",
-        ))
+        wm.add(
+            ObservationNode(
+                text=f"kitchen_obs_{i}: {'table' if i % 3 == 0 else 'counter' if i % 3 == 1 else 'sink'}",
+                coordinates=np.array([x, y, 0.0]),
+                timestamp=t,
+                layer_name="vlm",
+            )
+        )
     sim_time[0] = 200.0
     wm.flush()
     wm.end_episode(gist="Patrolled kitchen area. Found tables, counters, and sinks.")
@@ -107,45 +109,53 @@ def test_full_pipeline(system):
         x = 30.0 + np.random.randn() * 0.5
         y = 10.0 + np.random.randn() * 0.5
         current_pos[0] = np.array([x, y, 0.0])
-        wm.add(ObservationNode(
-            text=f"hallway_obs_{i}: {'door' if i % 4 == 0 else 'painting' if i % 4 == 1 else 'exit_sign' if i % 4 == 2 else 'fire_extinguisher'}",
-            coordinates=np.array([x, y, 0.0]),
-            timestamp=t,
-            layer_name="vlm",
-        ))
+        wm.add(
+            ObservationNode(
+                text=f"hallway_obs_{i}: {'door' if i % 4 == 0 else 'painting' if i % 4 == 1 else 'exit_sign' if i % 4 == 2 else 'fire_extinguisher'}",
+                coordinates=np.array([x, y, 0.0]),
+                timestamp=t,
+                layer_name="vlm",
+            )
+        )
     sim_time[0] = 400.0
     wm.flush()
-    wm.end_episode(gist="Patrolled hallway. Found doors, paintings, exit signs, fire extinguishers.")
+    wm.end_episode(
+        gist="Patrolled hallway. Found doors, paintings, exit signs, fire extinguishers."
+    )
 
     # Episode 3: Lobby inspection (t=500-600, position around (50, 50))
     sim_time[0] = 500.0
-    ep3_id = wm.start_episode("lobby_inspection")
+    wm.start_episode("lobby_inspection")
     for i in range(15):
         t = 500.0 + i * 5
         sim_time[0] = t
         x = 50.0 + np.random.randn() * 2.0
         y = 50.0 + np.random.randn() * 2.0
         current_pos[0] = np.array([x, y, 0.0])
-        wm.add(ObservationNode(
-            text=f"lobby_obs_{i}: {'chair' if i % 3 == 0 else 'reception_desk' if i % 3 == 1 else 'plant'}",
-            coordinates=np.array([x, y, 0.0]),
-            timestamp=t,
-            layer_name="vlm",
-        ))
+        wm.add(
+            ObservationNode(
+                text=f"lobby_obs_{i}: {'chair' if i % 3 == 0 else 'reception_desk' if i % 3 == 1 else 'plant'}",
+                coordinates=np.array([x, y, 0.0]),
+                timestamp=t,
+                layer_name="vlm",
+            )
+        )
     sim_time[0] = 600.0
     wm.flush()
     wm.end_episode(gist="Inspected lobby. Found chairs, reception desk, plants.")
 
     # Also add some detection-layer observations
     for i in range(10):
-        store.add_observation(ObservationNode(
-            text=f"detected_person_{i}",
-            coordinates=np.array([10.0 + i * 5, 10.0, 0.0]),
-            timestamp=150.0 + i * 50,
-            layer_name="detections",
-            source_type="detection",
-            confidence=0.8 + np.random.rand() * 0.2,
-        ))
+        store.add_observation(
+            ObservationNode(
+                text=f"detected_person_{i}",
+                coordinates=np.array([10.0 + i * 5, 10.0, 0.0]),
+                timestamp=150.0 + i * 50,
+                layer_name="detections",
+                source_type="detection",
+                confidence=0.8 + np.random.rand() * 0.2,
+            )
+        )
 
     total_obs = store.count_observations()
     assert total_obs >= 50, f"Expected 50+ observations, got {total_obs}"
@@ -195,7 +205,7 @@ def test_full_pipeline(system):
         assert o.tier == Tier.LONG_TERM.value
 
     # Time-window consolidation for detection-layer observations
-    gist_ids = consolidation.consolidate_time_window(reference_time=700.0)
+    consolidation.consolidate_time_window(reference_time=700.0)
     # Detection observations at t=150-600, window=500s, cutoff=200
     # Observations before t=200 are candidates
 
@@ -223,12 +233,16 @@ def test_full_pipeline(system):
 
     # Gist summarizes edges
     if gist1_ids[0]:
-        gist_edges = store.get_edges(source_id=gist1_ids[0], edge_type=EdgeType.SUMMARIZES)
+        gist_edges = store.get_edges(
+            source_id=gist1_ids[0], edge_type=EdgeType.SUMMARIZES
+        )
         assert len(gist_edges) == 15
 
     # ── Phase 6: Dispatch tool calls ──────────────────────────────
 
-    result = tools.dispatch_tool_call("spatial_query", {"x": 30.0, "y": 10.0, "radius": 3.0})
+    result = tools.dispatch_tool_call(
+        "spatial_query", {"x": 30.0, "y": 10.0, "radius": 3.0}
+    )
     assert "hallway" in result or len(result) > 0
 
     result = tools.dispatch_tool_call("episode_summary", {"last_n": 3})
@@ -249,12 +263,14 @@ def test_persistence_round_trip(tmp_path):
     store1 = MemoryStore(config=config, embedding_provider=embedder)
     store1.start_episode("ep1", 1000.0)
     for i in range(20):
-        store1.add_observation(ObservationNode(
-            text=f"obs_{i}",
-            coordinates=np.array([float(i), 0.0, 0.0]),
-            timestamp=1000.0 + i,
-            layer_name="vlm",
-        ))
+        store1.add_observation(
+            ObservationNode(
+                text=f"obs_{i}",
+                coordinates=np.array([float(i), 0.0, 0.0]),
+                timestamp=1000.0 + i,
+                layer_name="vlm",
+            )
+        )
     store1.close()
 
     # Read phase

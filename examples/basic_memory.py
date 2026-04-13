@@ -18,7 +18,6 @@ def main():
     print(f"Storage: {tmp}")
 
     with SpatioTemporalMemory(db_path=str(tmp / "demo.db")) as mem:
-
         # ── Episode 1: Kitchen patrol ─────────────────────────────
         mem.start_episode("kitchen_patrol")
         observations = [
@@ -40,7 +39,9 @@ def main():
             x = 25.0 + i * 2
             mem.add(
                 f"Hallway: {'door' if i % 2 == 0 else 'painting'}",
-                x=x, y=10.0, layer_name="vlm",
+                x=x,
+                y=10.0,
+                layer_name="vlm",
             )
         mem.end_episode()
 

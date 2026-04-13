@@ -20,30 +20,72 @@ def main():
     parser = argparse.ArgumentParser(
         description="eMEM Testing Harness — simulate EMOS perception pipeline"
     )
-    parser.add_argument("--steps", type=int, default=100, help="Number of environment steps")
-    parser.add_argument("--vlm-every", type=int, default=5, help="Run VLM every N steps")
     parser.add_argument(
-        "--env", type=str, default="MiniGrid-MultiRoom-N6-v0",
+        "--steps", type=int, default=100, help="Number of environment steps"
+    )
+    parser.add_argument(
+        "--vlm-every", type=int, default=5, help="Run VLM every N steps"
+    )
+    parser.add_argument(
+        "--env",
+        type=str,
+        default="MiniGrid-MultiRoom-N6-v0",
         help="Environment name: MiniGrid env (e.g. MiniGrid-MultiRoom-N6-v0) or AI2-THOR scene (e.g. FloorPlan1)",
     )
-    parser.add_argument("--headless", action="store_true", help="Use CloudRendering for AI2-THOR (no display)")
-    parser.add_argument("--resolution", type=int, default=300, help="Frame resolution for AI2-THOR (default: 300)")
     parser.add_argument(
-        "--explore", type=str, default="random", choices=["random", "teleport"],
+        "--headless",
+        action="store_true",
+        help="Use CloudRendering for AI2-THOR (no display)",
+    )
+    parser.add_argument(
+        "--resolution",
+        type=int,
+        default=300,
+        help="Frame resolution for AI2-THOR (default: 300)",
+    )
+    parser.add_argument(
+        "--explore",
+        type=str,
+        default="random",
+        choices=["random", "teleport"],
         help="Exploration mode for AI2-THOR: random actions or teleport tour (default: random)",
     )
     parser.add_argument(
-        "--provider", type=str, default="ollama", choices=["ollama", "gemini"],
+        "--provider",
+        type=str,
+        default="ollama",
+        choices=["ollama", "gemini"],
         help="LLM/VLM/embedding provider backend",
     )
-    parser.add_argument("--vlm-model", type=str, default=None, help="VLM model (default: per provider)")
-    parser.add_argument("--llm-model", type=str, default=None, help="LLM model (default: per provider)")
-    parser.add_argument("--embed-model", type=str, default=None, help="Embedding model (default: per provider)")
-    parser.add_argument("--ollama-url", type=str, default="http://localhost:11434", help="Ollama server URL")
-    parser.add_argument("--gemini-api-key", type=str, default=None, help="Gemini API key (or set GEMINI_API_KEY)")
+    parser.add_argument(
+        "--vlm-model", type=str, default=None, help="VLM model (default: per provider)"
+    )
+    parser.add_argument(
+        "--llm-model", type=str, default=None, help="LLM model (default: per provider)"
+    )
+    parser.add_argument(
+        "--embed-model",
+        type=str,
+        default=None,
+        help="Embedding model (default: per provider)",
+    )
+    parser.add_argument(
+        "--ollama-url",
+        type=str,
+        default="http://localhost:11434",
+        help="Ollama server URL",
+    )
+    parser.add_argument(
+        "--gemini-api-key",
+        type=str,
+        default=None,
+        help="Gemini API key (or set GEMINI_API_KEY)",
+    )
     parser.add_argument("--db-path", type=str, default=None, help="Memory DB path")
     parser.add_argument("--json", action="store_true", help="Output results as JSON")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging")
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable debug logging"
+    )
     args = parser.parse_args()
 
     logging.basicConfig(

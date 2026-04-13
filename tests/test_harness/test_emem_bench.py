@@ -144,12 +144,14 @@ class TestEMEMBenchLoader:
         traj_path = scene_dir / "trajectory.json"
         traj_path.write_text(json.dumps(sample))
 
-        index = [{
-            "sample_id": "test_scene_01",
-            "scene_id": "TestScene1",
-            "source": "ai2thor",
-            "trajectory_path": "ai2thor/testscene1/trajectory.json",
-        }]
+        index = [
+            {
+                "sample_id": "test_scene_01",
+                "scene_id": "TestScene1",
+                "source": "ai2thor",
+                "trajectory_path": "ai2thor/testscene1/trajectory.json",
+            }
+        ]
         (tmp_path / "emem-bench-v0.json").write_text(json.dumps(index))
 
         loader = EMEMBenchLoader(str(tmp_path))
@@ -332,7 +334,10 @@ class TestQuestionGenerationFixes:
         questions = generate_questions_for_sample(sample)
         spatial = [q for q in questions if q["category"] == "spatial"]
         for q in spatial:
-            assert "floor" not in q["question"].lower() or "floorplan" in q["question"].lower()
+            assert (
+                "floor" not in q["question"].lower()
+                or "floorplan" in q["question"].lower()
+            )
             assert "Where is the wall?" != q["question"]
 
     def test_no_entity_count_questions(self):
@@ -363,21 +368,30 @@ class TestQuestionGenerationFixes:
         sample = _make_sample()
         questions = generate_questions_for_sample(sample)
         for q in questions:
-            if "describe" in q["question"].lower() or "tell me everything" in q["question"].lower():
+            if (
+                "describe" in q["question"].lower()
+                or "tell me everything" in q["question"].lower()
+            ):
                 word_count = len(q["answer"].split())
-                assert word_count < 100, f"GT too long ({word_count} words): {q['answer'][:80]}..."
+                assert (
+                    word_count < 100
+                ), f"GT too long ({word_count} words): {q['answer'][:80]}..."
 
 
 class TestToolsExpected:
     def test_benchmark_question_has_tools_expected(self):
         """BenchmarkQuestion dataclass should have tools_expected field."""
         bq = BenchmarkQuestion(
-            question_id="q1", question="test", answer="test",
+            question_id="q1",
+            question="test",
+            answer="test",
         )
         assert bq.tools_expected == []
 
         bq2 = BenchmarkQuestion(
-            question_id="q2", question="test", answer="test",
+            question_id="q2",
+            question="test",
+            answer="test",
             tools_expected=["locate", "semantic_search"],
         )
         assert bq2.tools_expected == ["locate", "semantic_search"]

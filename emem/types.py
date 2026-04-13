@@ -7,15 +7,19 @@ import numpy as np
 
 
 class EdgeType(str, Enum):
-    BELONGS_TO = "belongs_to"       # Observation -> Episode
-    FOLLOWS = "follows"             # Episode -> Episode (temporal ordering)
-    SUBTASK_OF = "subtask_of"       # Episode -> Episode (hierarchical)
-    SUMMARIZES = "summarizes"       # Gist -> Observation(s)
-    OBSERVED_IN = "observed_in"     # Entity -> Observation
-    COOCCURS_WITH = "cooccurs_with" # Entity <-> Entity
+    """Relationship kinds connecting memory nodes in the graph."""
+
+    BELONGS_TO = "belongs_to"  # Observation -> Episode
+    FOLLOWS = "follows"  # Episode -> Episode (temporal ordering)
+    SUBTASK_OF = "subtask_of"  # Episode -> Episode (hierarchical)
+    SUMMARIZES = "summarizes"  # Gist -> Observation(s)
+    OBSERVED_IN = "observed_in"  # Entity -> Observation
+    COOCCURS_WITH = "cooccurs_with"  # Entity <-> Entity
 
 
 class Tier(str, Enum):
+    """Storage tier assigned to a memory item by its consolidation state."""
+
     WORKING = "working"
     SHORT_TERM = "short_term"
     LONG_TERM = "long_term"
@@ -23,17 +27,22 @@ class Tier(str, Enum):
 
 
 class EpisodeStatus(str, Enum):
+    """Lifecycle state of an episode."""
+
     ACTIVE = "active"
     COMPLETED = "completed"
     ABANDONED = "abandoned"
 
 
 def _new_id() -> str:
+    """Generate a unique hex identifier for a new node or edge."""
     return uuid.uuid4().hex
 
 
 @dataclass
 class ObservationNode:
+    """Single timestamped observation tied to a spatial location."""
+
     text: str
     coordinates: np.ndarray
     timestamp: float
@@ -49,6 +58,8 @@ class ObservationNode:
 
 @dataclass
 class EpisodeNode:
+    """Temporal grouping of observations representing a coherent episode."""
+
     name: str
     start_time: float
     end_time: Optional[float] = None
@@ -62,6 +73,8 @@ class EpisodeNode:
 
 @dataclass
 class GistNode:
+    """Consolidated summary of a cluster of related observations."""
+
     text: str
     center_position: np.ndarray
     radius: float
@@ -77,6 +90,8 @@ class GistNode:
 
 @dataclass
 class EntityNode:
+    """Named entity tracked across observations with location and recency."""
+
     name: str
     coordinates: np.ndarray
     last_seen: float
@@ -92,6 +107,8 @@ class EntityNode:
 
 @dataclass
 class Edge:
+    """Typed directed edge connecting two memory nodes."""
+
     source_id: str
     target_id: str
     edge_type: EdgeType

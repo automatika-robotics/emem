@@ -141,14 +141,19 @@ class _BaseReactAgent(ABC):
                 step.observation = observation
                 result.steps.append(step)
                 messages.append({"role": "assistant", "content": response})
-                messages.append({"role": "user", "content": f"Observation: {observation}"})
+                messages.append({
+                    "role": "user",
+                    "content": f"Observation: {observation}",
+                })
             else:
                 result.answer = response
                 result.steps.append(step)
                 break
         else:
             last = result.steps[-1].thought if result.steps else "none"
-            result.answer = f"Reached max steps ({self._max_steps}). Last thought: {last}"
+            result.answer = (
+                f"Reached max steps ({self._max_steps}). Last thought: {last}"
+            )
 
         return result
 
@@ -186,7 +191,9 @@ class ReactAgent(_BaseReactAgent):
         from harness.providers.ollama_vlm import _is_thinking_model
 
         body: dict = {
-            "model": self._model, "messages": messages, "stream": False,
+            "model": self._model,
+            "messages": messages,
+            "stream": False,
         }
         if _is_thinking_model(self._model):
             body["think"] = self._think

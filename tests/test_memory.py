@@ -41,7 +41,9 @@ class TestAdd:
     def test_with_all_args(self, mem):
         obs_id = mem.add(
             "detected person",
-            x=5.0, y=10.0, z=1.5,
+            x=5.0,
+            y=10.0,
+            z=1.5,
             layer_name="detections",
             source_type="detection",
             confidence=0.95,
@@ -102,7 +104,6 @@ class TestEpisodeLifecycle:
 
 class TestQueryAutoFlush:
     def test_spatial_query_sees_buffered(self, mem):
-        config = SpatioTemporalMemoryConfig(flush_batch_size=100, flush_interval=9999)
         # Won't auto-flush due to high thresholds — but query should force it
         mem.add("nearby", x=1.0, y=1.0)
 
@@ -154,7 +155,7 @@ class TestUnifiedSearchE2E:
             config=config,
             embedding_provider=FakeEmbedder(32),
         )
-        ep_id = mem.start_episode("furniture_scan")
+        mem.start_episode("furniture_scan")
         mem.add("red chair at entrance", x=1.0, y=1.0)
         mem.add("blue table near wall", x=1.5, y=1.5)
         mem.add("wooden shelf by door", x=2.0, y=2.0)
@@ -162,7 +163,9 @@ class TestUnifiedSearchE2E:
 
         # After consolidation, observations are archived. semantic_search should
         # still find relevant content via the gist.
-        result = mem.dispatch_tool_call("semantic_search", {"query": "chair", "n_results": 10})
+        result = mem.dispatch_tool_call(
+            "semantic_search", {"query": "chair", "n_results": 10}
+        )
         # Should find something (gist) even though observations are archived
         assert "No results found" not in result
         mem.close()

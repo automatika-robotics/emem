@@ -74,7 +74,9 @@ def post_json_with_retry(
                 wait = backoff * (2**attempt)
                 log.warning(
                     "Rate limited (429), retrying in %.0fs (%d/%d)",
-                    wait, attempt + 1, max_retries,
+                    wait,
+                    attempt + 1,
+                    max_retries,
                 )
                 time.sleep(wait)
                 continue

@@ -47,7 +47,9 @@ class LLMMatchScorer:
     def name(self) -> str:
         return "llm_match"
 
-    def score(self, question: str, prediction: str, ground_truth: str) -> Dict[str, Any]:
+    def score(
+        self, question: str, prediction: str, ground_truth: str
+    ) -> Dict[str, Any]:
         """Score prediction via LLM judge on a 1-5 scale, normalized to 0-100.
 
         :param question: The benchmark question.

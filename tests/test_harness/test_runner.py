@@ -22,7 +22,9 @@ class TestMetrics:
                 latency_s=0.5,
             ),
             QueryResult(
-                query=BenchmarkQuery("test2", "body_status", expected_substrings=["battery"]),
+                query=BenchmarkQuery(
+                    "test2", "body_status", expected_substrings=["battery"]
+                ),
                 tools_used=["body_status"],
                 answer="battery: 85%",
                 latency_s=0.3,
@@ -116,9 +118,18 @@ class TestScenarios:
 
     def test_all_queries_have_expected_tool(self):
         valid_tools = {
-            "semantic_search", "spatial_query", "temporal_query",
-            "episode_summary", "get_current_context", "search_gists",
-            "entity_query", "locate", "recall", "body_status",
+            "semantic_search",
+            "spatial_query",
+            "temporal_query",
+            "episode_summary",
+            "get_current_context",
+            "search_gists",
+            "entity_query",
+            "locate",
+            "recall",
+            "body_status",
         }
         for q in STANDARD_QUERIES:
-            assert q.expected_tool in valid_tools, f"{q.query} has invalid tool {q.expected_tool}"
+            assert (
+                q.expected_tool in valid_tools
+            ), f"{q.query} has invalid tool {q.expected_tool}"

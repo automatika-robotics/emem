@@ -132,7 +132,9 @@ class AI2ThorAdapter:
         start_idx = int(np.argmin(np.linalg.norm(coords - agent_xz, axis=1)))
 
         order = _farthest_point_sample(
-            positions, start_idx=start_idx, max_points=self._max_waypoints,
+            positions,
+            start_idx=start_idx,
+            max_points=self._max_waypoints,
         )
         self._tour = [positions[i] for i in order]
         self._tour_idx = 0
@@ -140,7 +142,8 @@ class AI2ThorAdapter:
 
         log.info(
             "Teleport tour: %d waypoints from %d reachable positions",
-            len(self._tour), len(positions),
+            len(self._tour),
+            len(positions),
         )
 
     def _teleport_to_waypoint(self, wp_idx: int, rotation: float = 0.0) -> Any:
@@ -151,7 +154,7 @@ class AI2ThorAdapter:
             x=wp["x"],
             y=wp["y"],
             z=wp["z"],
-            rotation=dict(x=0, y=rotation, z=0),
+            rotation={"x": 0, "y": rotation, "z": 0},
             horizon=0.0,
             standing=True,
         )
@@ -166,7 +169,8 @@ class AI2ThorAdapter:
         """
         self._controller.reset(self._scene)
         event = self._controller.step(
-            action="Initialize", gridSize=self._grid_size,
+            action="Initialize",
+            gridSize=self._grid_size,
         )
 
         if self._exploration_mode == "teleport":
@@ -177,7 +181,8 @@ class AI2ThorAdapter:
         return event.frame, self._pos()
 
     def step(
-        self, action: int,
+        self,
+        action: int,
     ) -> tuple[np.ndarray, tuple[float, float], float, bool, dict[str, Any]]:
         """Take a navigation action.
 
@@ -214,9 +219,16 @@ class AI2ThorAdapter:
             if self._tour_idx >= len(self._tour):
                 # Tour complete
                 frame = self._controller.last_event.frame
-                return frame, self._pos(), 0.0, True, {
-                    "success": True, "tour_complete": True,
-                }
+                return (
+                    frame,
+                    self._pos(),
+                    0.0,
+                    True,
+                    {
+                        "success": True,
+                        "tour_complete": True,
+                    },
+                )
 
             rotation = 0.0
             event = self._teleport_to_waypoint(self._tour_idx, rotation)

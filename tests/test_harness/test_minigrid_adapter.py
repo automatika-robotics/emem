@@ -50,7 +50,7 @@ class TestMiniGridAdapter:
         adapter.reset()
         for _ in range(20):
             action = 2  # forward
-            frame, pos, reward, done, info = adapter.step(action)
+            _, _, _, done, _ = adapter.step(action)
             if done:
                 adapter.reset()
         adapter.close()

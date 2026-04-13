@@ -146,8 +146,10 @@ class TestBenchmarkRunnerSynthetic:
     def test_agent_position_injected(self):
         frames = [
             TrajectoryFrame(
-                frame_id="f0", position=(1.0, 2.0, 0.0),
-                timestamp=0.0, text="A chair",
+                frame_id="f0",
+                position=(1.0, 2.0, 0.0),
+                timestamp=0.0,
+                text="A chair",
             )
         ]
         questions = [
@@ -156,14 +158,17 @@ class TestBenchmarkRunnerSynthetic:
             )
         ]
         sample = BenchmarkSample(
-            sample_id="s0", scene_id="sc0",
-            trajectory=frames, questions=questions,
+            sample_id="s0",
+            scene_id="sc0",
+            trajectory=frames,
+            questions=questions,
             agent_position=(3.0, 4.0, 0.0),
             agent_situation="Standing near the door",
         )
 
         class SingleLoader:
             name = "test"
+
             def load(self):
                 yield sample
 
@@ -180,7 +185,13 @@ class TestBenchmarkRunnerSynthetic:
 
 class TestAblationConfigs:
     def test_all_ablations_defined(self):
-        expected = {"full", "vector_only", "no_consolidation", "no_spatial", "flat_layer"}
+        expected = {
+            "full",
+            "vector_only",
+            "no_consolidation",
+            "no_spatial",
+            "flat_layer",
+        }
         assert set(ABLATIONS.keys()) == expected
 
     def test_vector_only_has_one_tool(self):
@@ -222,9 +233,16 @@ class TestAblatedMemory:
         class MockMem:
             def get_tool_definitions(self):
                 return [
-                    {"type": "function", "function": {"name": "semantic_search", "description": "s"}},
-                    {"type": "function", "function": {"name": "locate", "description": "l"}},
+                    {
+                        "type": "function",
+                        "function": {"name": "semantic_search", "description": "s"},
+                    },
+                    {
+                        "type": "function",
+                        "function": {"name": "locate", "description": "l"},
+                    },
                 ]
+
             def dispatch_tool_call(self, name, args):
                 return f"called {name}"
 
@@ -236,4 +254,7 @@ class TestAblatedMemory:
         assert defs[0]["function"]["name"] == "semantic_search"
 
         assert "not available" in wrapped.dispatch_tool_call("locate", {})
-        assert wrapped.dispatch_tool_call("semantic_search", {}) == "called semantic_search"
+        assert (
+            wrapped.dispatch_tool_call("semantic_search", {})
+            == "called semantic_search"
+        )

@@ -27,7 +27,9 @@ class MiniGridAdapter:
         obs, _info = self.env.reset()
         return obs["image"], tuple(self.env.unwrapped.agent_pos)
 
-    def step(self, action: int) -> tuple[np.ndarray, tuple[int, int], float, bool, dict[str, Any]]:
+    def step(
+        self, action: int
+    ) -> tuple[np.ndarray, tuple[int, int], float, bool, dict[str, Any]]:
         """Take an action.
 
         :param action: Action index (0=left, 1=right, 2=forward, 3=pickup,

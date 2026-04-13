@@ -76,7 +76,9 @@ class TestAddBodyState:
 class TestBodyStatusTool:
     def test_body_status(self, mem):
         mem.add_body_state("45% remaining", layer_name="battery", timestamp=_T - 120)
-        mem.add_body_state("72C across 4 cores", layer_name="cpu_temp", timestamp=_T - 30)
+        mem.add_body_state(
+            "72C across 4 cores", layer_name="cpu_temp", timestamp=_T - 30
+        )
         result = mem.body_status()
         assert "Body Status:" in result
         assert "45% remaining" in result

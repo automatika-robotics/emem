@@ -3,6 +3,8 @@ from dataclasses import dataclass
 
 @dataclass
 class SpatioTemporalMemoryConfig:
+    """Configuration parameters for a SpatioTemporalMemory instance."""
+
     # Storage
     db_path: str = "memory.db"
     hnsw_path: str = "memory_hnsw.bin"

@@ -21,7 +21,9 @@ class EMEMBenchScorer:
     def name(self) -> str:
         return "emem_bench"
 
-    def score(self, question: str, prediction: str, ground_truth: str) -> Dict[str, Any]:
+    def score(
+        self, question: str, prediction: str, ground_truth: str
+    ) -> Dict[str, Any]:
         """Default scoring via LLM judge.
 
         :param question: The benchmark question.
