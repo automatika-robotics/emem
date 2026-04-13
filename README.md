@@ -3,7 +3,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/_static/eMEM_dark.png">
   <source media="(prefers-color-scheme: light)" srcset="docs/_static/eMEM_light.png">
-  <img alt="eMEM Logo" src="docs/_static/eMEM_dark.png" width="600">
+  <img alt="eMEM Logo" src="docs/_static/eMEM_dark.png" width="500">
 </picture>
 
 <br/>
@@ -34,9 +34,9 @@ A hybrid graph-based spatio-temporal memory system that gives embodied agents th
 
 ## Why eMEM?
 
-**eMEM** is the memory layer of the [EMOS](https://github.com/automatika-robotics/emos) (Embodied Operating System) ecosystem. It gives Physical AI agents a persistent, queryable sense of place and history — so they don't just react to the current frame, but **remember**, **recall**, and **reason** over everything they've observed.
+eMEM gives Physical AI agents a persistent, queryable sense of place and history, so they don't just react to the current frame, but **remember**, **recall**, and **reason** over everything they've observed.
 
-Mobile robots and embodied AI agents accumulate thousands of observations per session -- object detections, scene descriptions, sensor readings -- but existing memory systems force a choice: **vector databases** that discard spatial structure, or **metric maps** that discard semantics. eMEM unifies both.
+Mobile robots and embodied AI agents accumulate thousands of observations per session; object detections, scene descriptions, sensor readings, but existing memory systems force a choice: **vector databases** that discard spatial structure, or **metric maps** that discard semantics. eMEM unifies both.
 
 | Capability | eMEM |
 |---|---|
@@ -47,8 +47,9 @@ Mobile robots and embodied AI agents accumulate thousands of observations per se
 | Memory consolidation | Automatic gist generation + tiered archival |
 | LLM integration | 10 ready-to-use tool definitions |
 
-Everything runs **fully embedded** -- SQLite, hnswlib, and Rtree -- with zero external services. A single `.db` file and a `.hnsw.bin` file contain the entire memory state.
+Everything runs **fully embedded**, SQLite, hnswlib, and Rtree, with zero external services. A single `.db` file and a `.hnsw.bin` file contain the entire memory state.
 
+**eMEM** is the memory layer of the [EMOS](https://github.com/automatika-robotics/emos) (Embodied Operating System) ecosystem.
 ## Installation
 
 ```bash
