@@ -3,13 +3,15 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/_static/eMEM_dark.png">
   <source media="(prefers-color-scheme: light)" srcset="docs/_static/eMEM_light.png">
-  <img alt="eMEM Logo" src="docs/_static/eMEM_dark.png" width="50%">
+  <img alt="eMEM Logo" src="https://raw.githubusercontent.com/automatika-robotics/emem/main/docs/_static/eMEM_light.png" width="50%">
 </picture>
 
 <br/>
 
 Part of the [EMOS](https://github.com/automatika-robotics/emos) ecosystem
 
+[![PyPI version](https://img.shields.io/pypi/v/emem.svg)](https://pypi.org/project/emem/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?logo=discord&logoColor=white)](https://discord.gg/B9ZU6qjzND)
 
