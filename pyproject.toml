@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "emem"
-version = "0.1.0"
+version = "0.2.0"
 description = "Hybrid graph-based spatio-temporal memory system for embodied agents"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -69,7 +69,7 @@ select = ["B","C","E","F","W","B9"]
 max-complexity = 15
 
 [tool.bumpver]
-current_version = "0.1.0"
+current_version = "0.2.0"
 version_pattern = "MAJOR.MINOR.PATCH"
 commit_message = "(chore) Bump version {old_version} -> {new_version}"
 tag_message = "{new_version}"
