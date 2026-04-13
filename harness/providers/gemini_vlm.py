@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 
 from harness.providers.gemini_llm import GeminiLLMClient

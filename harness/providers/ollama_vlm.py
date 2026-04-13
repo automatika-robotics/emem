@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 
 from harness.providers.http import encode_image_b64, post_json, strip_think_tags
