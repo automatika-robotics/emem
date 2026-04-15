@@ -245,7 +245,7 @@ mem.entity_query(name=None, entity_type=None, near_x=None, ...)
 mem.locate(concept, n_results=10, ...)
 mem.recall(query, n_results=10, ...)
 mem.body_status(layers=None)
-mem.add_body_state(text, layer_name, timestamp=None, confidence=1.0, metadata=None)
+mem.add_body_state(text, layer_name, x=0.0, y=0.0, z=0.0, timestamp=None, confidence=1.0, metadata=None)
 ```
 
 ### Embedding Providers
@@ -333,10 +333,12 @@ mem.spatial_query(x=5.0, y=5.0, radius=3.0, layer="vlm")
 eMEM treats internal body state (battery, temperature, joint health) as a first-class memory dimension alongside world observations:
 
 ```python
-# Record body state — automatically stamped at the robot's current position
-mem.add_body_state("battery: 45%", layer_name="battery")
-mem.add_body_state("72C across 4 cores", layer_name="cpu_temp")
-mem.add_body_state("all joints nominal", layer_name="joint_health")
+# Record body state — pass the robot's current world-frame position so
+# the reading is co-located with world observations at the same pose.
+# (x/y/z default to 0 for text-only / non-embodied callers.)
+mem.add_body_state("battery: 45%", layer_name="battery", x=robot_x, y=robot_y)
+mem.add_body_state("72C across 4 cores", layer_name="cpu_temp", x=robot_x, y=robot_y)
+mem.add_body_state("all joints nominal", layer_name="joint_health", x=robot_x, y=robot_y)
 
 # Get latest body state
 print(mem.body_status())
@@ -439,7 +441,9 @@ with SpatioTemporalMemory(
             mem.add(desc, x=float(pos[0]), y=float(pos[1]), layer_name="description")
 
         for layer, text in intero.step().items():
-            mem.add_body_state(text, layer_name=layer)
+            mem.add_body_state(
+                text, layer_name=layer, x=float(pos[0]), y=float(pos[1])
+            )
 
         if done:
             mem.end_episode()

@@ -331,6 +331,9 @@ class BenchmarkRunner:
                     mem.add_body_state(
                         text=frame.text,
                         layer_name=layer,
+                        x=frame.position[0],
+                        y=frame.position[1],
+                        z=frame.position[2],
                         timestamp=frame.timestamp,
                     )
                 else:

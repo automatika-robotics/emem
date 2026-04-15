@@ -162,7 +162,12 @@ class HarnessRunner:
 
             body = intero.step()
             for layer, text in body.items():
-                mem.add_body_state(text, layer_name=layer)
+                mem.add_body_state(
+                    text,
+                    layer_name=layer,
+                    x=float(pos[0]),
+                    y=float(pos[1]),
+                )
                 n_body += 1
 
             if done:

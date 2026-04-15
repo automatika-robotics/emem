@@ -52,14 +52,15 @@ class TestAddBodyState:
         assert obs.layer_name == "battery"
         assert obs.text == "battery: 45%"
 
-    def test_body_state_uses_current_position(self, mem):
-        mem.add("world observation", x=10.0, y=10.0)
-        obs_id = mem.add_body_state("battery: 45%", layer_name="battery")
+    def test_body_state_uses_explicit_position(self, mem):
+        obs_id = mem.add_body_state(
+            "battery: 45%", layer_name="battery", x=10.0, y=10.0
+        )
         mem.save()
         obs = mem.store.get_observation(obs_id)
         np.testing.assert_array_almost_equal(obs.coordinates, [10.0, 10.0, 0.0])
 
-    def test_body_state_no_position_fallback(self, mem):
+    def test_body_state_no_position_defaults_to_origin(self, mem):
         assert mem.current_position is None
         obs_id = mem.add_body_state("battery: 45%", layer_name="battery")
         mem.save()
@@ -69,7 +70,7 @@ class TestAddBodyState:
     def test_position_not_updated_by_body_state(self, mem):
         mem.add("world obs", x=10.0, y=10.0)
         np.testing.assert_array_almost_equal(mem.current_position, [10.0, 10.0, 0.0])
-        mem.add_body_state("battery: 45%", layer_name="battery")
+        mem.add_body_state("battery: 45%", layer_name="battery", x=99.0, y=99.0)
         np.testing.assert_array_almost_equal(mem.current_position, [10.0, 10.0, 0.0])
 
 
@@ -81,8 +82,17 @@ class TestBodyStatusTool:
         )
         result = mem.body_status()
         assert "Body Status:" in result
-        assert "45% remaining" in result
-        assert "72C across 4 cores" in result
+        assert "[battery] 45% remaining" in result
+        assert "[cpu_temp] 72C across 4 cores" in result
+
+    def test_body_status_disambiguates_layers_sharing_text(self, mem):
+        """When two layers have the same text (e.g. plugin returns a bare
+        value like '42%'), the [layer] prefix lets the LLM tell them apart."""
+        mem.add_body_state("42%", layer_name="battery")
+        mem.add_body_state("42%", layer_name="humidity")
+        result = mem.body_status()
+        assert "[battery] 42%" in result
+        assert "[humidity] 42%" in result
 
     def test_body_status_layer_filter(self, mem):
         mem.add_body_state("45% remaining", layer_name="battery")
