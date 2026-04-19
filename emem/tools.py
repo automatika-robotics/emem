@@ -9,23 +9,630 @@ from emem.store import MemoryStore
 from emem.types import EntityNode, GistNode
 
 
+### Public tool schemas ###
+# OpenAI-format JSON schemas for the 10 retrieval tools exposed by
+# SpatioTemporalMemory. Keyed by tool name so callers can reference individual
+# schemas at class-definition time without constructing a memory instance.
+# Descriptions are written for tool-calling LLMs: each includes the tool's
+# purpose, what it returns, and guidance on when to pick it over sibling
+# tools. All time parameters accept either relative strings ('-10m', '-1h',
+# '-2d') or numeric Unix timestamps. All coordinates are in world-frame meters.
+
+TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
+    "semantic_search": {
+        "name": "semantic_search",
+        "description": (
+            "Search stored observations by meaning using semantic similarity. "
+            "Returns whatever recent raw observations and older consolidated "
+            "summaries happen to be closest to the query — results are ranked "
+            "by similarity, not by truth, so a result being returned does NOT "
+            "by itself mean it answers the question. "
+            "How to read the results: if the search returns observations that "
+            "are relevant to the question — mentioning the entities, events, "
+            "or topics being asked about — then reason from them to produce "
+            "an answer, even when no single observation states the answer "
+            "verbatim. Combining, paraphrasing, and inferring across multiple "
+            "retrieved observations is expected and encouraged. "
+            "However, if the search returns nothing relevant — no observation "
+            "mentions the subject of the question at all — then the correct "
+            "answer is that the information is not available. In that case, "
+            "do not fabricate entities, events, or details that were not "
+            "retrieved. "
+            "Optionally narrow the search by time window (time_after / "
+            "time_before), perception layer, or episode. The spatial filter "
+            "parameters (near_x / near_y / spatial_radius) only help when "
+            "observations were stored with real world coordinates — for "
+            "text-only or conversational memory, leave them unset."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Natural-language description of what to find, "
+                        "e.g. 'coffee mug', 'person waving', 'charging station'."
+                    ),
+                },
+                "n_results": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Maximum number of results to return.",
+                },
+                "layer": {
+                    "type": "string",
+                    "description": (
+                        "Only return observations from this perception layer "
+                        "(e.g. 'vision', 'speech', 'detections'). Omit to "
+                        "search all layers."
+                    ),
+                },
+                "time_after": {
+                    "type": "string",
+                    "description": (
+                        "Only observations after this time. Relative "
+                        "('-10m', '-1h', '-2d') or Unix timestamp."
+                    ),
+                },
+                "time_before": {
+                    "type": "string",
+                    "description": (
+                        "Only observations before this time. Same format as time_after."
+                    ),
+                },
+                "near_x": {
+                    "type": "number",
+                    "description": (
+                        "X coordinate of a spatial filter point, in "
+                        "world-frame meters. Must be paired with near_y and "
+                        "spatial_radius."
+                    ),
+                },
+                "near_y": {
+                    "type": "number",
+                    "description": (
+                        "Y coordinate of the spatial filter point, in "
+                        "world-frame meters."
+                    ),
+                },
+                "spatial_radius": {
+                    "type": "number",
+                    "description": (
+                        "Radius in meters around (near_x, near_y). "
+                        "Observations farther than this are excluded."
+                    ),
+                },
+                "episode_id": {
+                    "type": "string",
+                    "description": (
+                        "Limit to a specific episode (as returned by start_episode)."
+                    ),
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    "spatial_query": {
+        "name": "spatial_query",
+        "description": (
+            "List observations stored within a radius of a point in the "
+            "world, with no semantic filter. Use this to dump everything "
+            "seen near a known location. For semantically filtered results "
+            "near a point, use semantic_search with near_x/near_y instead. "
+            "\n\n"
+            "Only meaningful when the memory was populated by an embodied "
+            "agent like a robot with real world coordinates."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "x": {
+                    "type": "number",
+                    "description": "X coordinate of the query point, in world-frame meters.",
+                },
+                "y": {
+                    "type": "number",
+                    "description": "Y coordinate of the query point, in world-frame meters.",
+                },
+                "z": {
+                    "type": "number",
+                    "default": 0.0,
+                    "description": "Z coordinate in meters. Use 0 for 2D maps.",
+                },
+                "radius": {
+                    "type": "number",
+                    "default": 2.0,
+                    "description": "Radius in meters. Observations farther than this are excluded.",
+                },
+                "layer": {
+                    "type": "string",
+                    "description": "Only return observations from this perception layer.",
+                },
+                "time_after": {
+                    "type": "string",
+                    "description": (
+                        "Only observations after this time. Relative "
+                        "('-10m', '-1h', '-2d') or Unix timestamp."
+                    ),
+                },
+                "time_before": {
+                    "type": "string",
+                    "description": "Only observations before this time.",
+                },
+                "n_results": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Maximum number of results to return.",
+                },
+            },
+            "required": ["x", "y"],
+        },
+    },
+    "temporal_query": {
+        "name": "temporal_query",
+        "description": (
+            "List observations in a time range, ordered chronologically. "
+            "Use this for questions like 'what happened between X and Y' or "
+            "'show me the last N minutes'. If raw observations in that "
+            "window have been archived, the tool falls back to consolidated "
+            "summaries automatically. "
+            "\n\n"
+            "Time arguments (time_after / time_before) accept a wide range "
+            "of forms, case-insensitive: '-10m', '10m', '10 minutes', "
+            "'last 10 minutes', '2 hours ago', 'yesterday', 'last week', "
+            "or a numeric Unix timestamp. If you know only the duration, "
+            "use last_n_minutes instead. The near_x / near_y spatial "
+            "filters only help when observations have real world coordinates."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "time_after": {
+                    "type": "string",
+                    "description": (
+                        "Start of the time window. Relative ('-10m', '-1h', "
+                        "'-2d') or Unix timestamp."
+                    ),
+                },
+                "time_before": {
+                    "type": "string",
+                    "description": "End of the time window. Same format.",
+                },
+                "last_n_minutes": {
+                    "type": "number",
+                    "description": (
+                        "Shortcut equivalent to setting time_after to "
+                        "'-<N>m' and time_before to now. Use for questions "
+                        "about recent history."
+                    ),
+                },
+                "layer": {
+                    "type": "string",
+                    "description": "Only return observations from this perception layer.",
+                },
+                "near_x": {
+                    "type": "number",
+                    "description": "Optional spatial filter; X in world-frame meters.",
+                },
+                "near_y": {
+                    "type": "number",
+                    "description": "Optional spatial filter; Y in world-frame meters.",
+                },
+                "spatial_radius": {
+                    "type": "number",
+                    "description": "Radius in meters around (near_x, near_y) for the spatial filter.",
+                },
+                "order": {
+                    "type": "string",
+                    "enum": ["newest", "oldest"],
+                    "default": "newest",
+                    "description": "Sort order. 'newest' returns most recent first.",
+                },
+                "n_results": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Maximum number of results to return.",
+                },
+            },
+        },
+    },
+    "episode_summary": {
+        "name": "episode_summary",
+        "description": (
+            "Fetch the consolidated summary of one or more episodes. An "
+            "episode is a named bracket of observations created with "
+            "start_episode/end_episode (e.g. 'kitchen patrol'). Use this "
+            "when the user asks about a past task by name, or about "
+            "'the last episode'. Provide at least one of episode_id, "
+            "task_name, or last_n."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "episode_id": {
+                    "type": "string",
+                    "description": (
+                        "Exact episode ID (as returned by start_episode). "
+                        "Use this if you already have the ID."
+                    ),
+                },
+                "task_name": {
+                    "type": "string",
+                    "description": (
+                        "Episode name substring. Returns all episodes "
+                        "whose name matches."
+                    ),
+                },
+                "last_n": {
+                    "type": "integer",
+                    "default": 1,
+                    "description": (
+                        "Return the last N episodes by time. Use when the "
+                        "user says 'last', 'previous', or 'most recent task'."
+                    ),
+                },
+            },
+        },
+    },
+    "get_current_context": {
+        "name": "get_current_context",
+        "description": (
+            "Summarize the robot's immediate situational awareness: what is "
+            "physically nearby the robot's current position, plus what has "
+            "been observed in the last few minutes. Returns nearby "
+            "entities, nearby area summaries, recent observations across "
+            "all layers, and current body status if available. "
+            "\n\n"
+            "Use this at the start of a conversation or task to ground the "
+            "robot in its current environment. Only useful when the robot "
+            "has a live odometry position callback."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "radius": {
+                    "type": "number",
+                    "default": 3.0,
+                    "description": "Spatial radius in meters for 'nearby'.",
+                },
+                "include_recent_minutes": {
+                    "type": "number",
+                    "default": 5.0,
+                    "description": "Time window in minutes for 'recent activity'.",
+                },
+            },
+        },
+    },
+    "search_gists": {
+        "name": "search_gists",
+        "description": (
+            "Search long-term memory (consolidated summaries only). A 'gist' "
+            "is an LLM-generated summary of a cluster of related "
+            "observations; these persist after raw observations are "
+            "archived. Use this for long-horizon recall (older than "
+            "consolidation window) or when you explicitly want high-level "
+            "summaries. For typical queries, prefer semantic_search, which "
+            "already includes gists."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What to search for in long-term memory.",
+                },
+                "n_results": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Maximum number of results to return.",
+                },
+                "time_after": {
+                    "type": "string",
+                    "description": (
+                        "Only gists covering a time after this. Relative "
+                        "('-1h', '-1d') or Unix timestamp."
+                    ),
+                },
+                "time_before": {
+                    "type": "string",
+                    "description": "Only gists covering a time before this.",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    "entity_query": {
+        "name": "entity_query",
+        "description": (
+            "Look up persistent entities (objects, people, landmarks) that "
+            "the memory has tracked across observations. Entities are "
+            "automatically extracted and deduplicated across time. Use "
+            "this when the user refers to something by identity rather "
+            "than description (e.g. 'the red chair', 'Maria', "
+            "'charging station #2'). Returns each entity's name, type, "
+            "last-known coordinates, and how many times it has been "
+            "observed. "
+            "\n\n"
+            "Note: entities are extracted during consolidation, so they "
+            "only appear once an episode has been ended or a consolidation "
+            "window has elapsed. If a recently seen object is not found, "
+            "fall back to semantic_search."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": (
+                        "Substring to match against entity names, e.g. "
+                        "'chair', 'alice'. Case-insensitive."
+                    ),
+                },
+                "entity_type": {
+                    "type": "string",
+                    "description": (
+                        "Filter by type, e.g. 'furniture', 'person', "
+                        "'landmark'. Combine with name for precise lookup."
+                    ),
+                },
+                "near_x": {
+                    "type": "number",
+                    "description": "Optional spatial filter; X in world-frame meters.",
+                },
+                "near_y": {
+                    "type": "number",
+                    "description": "Optional spatial filter; Y in world-frame meters.",
+                },
+                "spatial_radius": {
+                    "type": "number",
+                    "description": "Radius in meters for the spatial filter.",
+                },
+                "last_seen_after": {
+                    "type": "string",
+                    "description": (
+                        "Only entities last observed after this time. "
+                        "Format: '-10m', '-1h', '-2d'."
+                    ),
+                },
+                "n_results": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Maximum number of results to return.",
+                },
+            },
+        },
+    },
+    "locate": {
+        "name": "locate",
+        "description": (
+            "Resolve a concept (e.g. 'the kitchen', 'charging station', "
+            "'the red chair') to its spatial coordinates in the world. "
+            "Returns a centroid (x, y, z) and a spread radius describing "
+            "where observations of that concept cluster. "
+            "\n\n"
+            "Use this when you need a target location for navigation or "
+            "path planning. Do NOT use it for general fact retrieval, "
+            "conversational-text memory, or any query where the answer "
+            "is not a set of coordinates — the centroid is only "
+            "meaningful when observations were stored with real "
+            "world-frame positions in a robot's memory."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "concept": {
+                    "type": "string",
+                    "description": "What to locate. Natural-language phrase.",
+                },
+                "n_results": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": (
+                        "How many matching observations to aggregate when "
+                        "computing the centroid."
+                    ),
+                },
+                "layer": {
+                    "type": "string",
+                    "description": "Only aggregate observations from this perception layer.",
+                },
+                "time_after": {
+                    "type": "string",
+                    "description": "Only consider observations after this time.",
+                },
+                "time_before": {
+                    "type": "string",
+                    "description": "Only consider observations before this time.",
+                },
+            },
+            "required": ["concept"],
+        },
+    },
+    "recall": {
+        "name": "recall",
+        "description": (
+            "Spatially grounded cross-modal lookup about a physical place, "
+            "object, or entity. The tool first runs semantic_search to "
+            "locate where the concept clusters in the world, then pulls "
+            "every observation, consolidated summary, and tracked entity "
+            "from that area — giving you a rich multi-layer picture of "
+            "what the robot knows about it. "
+            "\n\n"
+            "IMPORTANT — only use this tool when all of the following hold: "
+            "(a) the memory was populated by a robot with real "
+            "world coordinates (odometry)."
+            "(b) the concept you are asking about is a physical thing with "
+            "a consistent location (e.g. 'the kitchen', 'charging station', "
+            "'Maria's desk') — not a conversation topic, a time window, or "
+            "an abstract fact. "
+            "Otherwise, use semantic_search."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What to recall. Natural-language phrase.",
+                },
+                "n_results": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Target number of items per source.",
+                },
+                "radius_multiplier": {
+                    "type": "number",
+                    "default": 1.5,
+                    "description": (
+                        "Multiplier on the located spread radius for "
+                        "gathering nearby data. Larger values cast a wider "
+                        "net."
+                    ),
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    "body_status": {
+        "name": "body_status",
+        "description": (
+            "Read the most recent body/internal state measurements "
+            "(battery %, CPU temp, joint health, etc.). Use this for "
+            "questions about the robot's own condition, not the external "
+            "environment. Returns the latest reading from each matching "
+            "body-state layer."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "layers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Filter to specific body-state layer names, e.g. "
+                        "['battery', 'cpu_temp', 'joint_health']. Omit to "
+                        "return all body layers."
+                    ),
+                },
+            },
+        },
+    },
+}
+
+
+# ── Relative time parsing ─────────────────────────────────────────────
+#
+# The retrieval tools accept strings that describe points in the past,
+# plus numeric Unix timestamps. The parser is lenient so that weak tool-
+# calling LLMs do not lose step budget arguing with the exact format.
+#
+# Supported forms (case-insensitive, whitespace-tolerant):
+#   Canonical relative:  '-10m', '-1h', '-2d', '-30s', '-1w'
+#   Without leading '-': '10m', '1h', '2d', '30s', '1w'
+#   Longer unit names:   '10min', '10 minutes', '2 hours', '3 days',
+#                        '1 week', '30 seconds'
+#   Wrapped:             'last 10 minutes', 'past 2 hours',
+#                        'the last hour', '10 minutes ago', '2h ago'
+#   'a'/'an' as 1:       'a minute', 'an hour', 'a day'
+#   Bare unit names:     'minute', 'hour', 'day', 'week'
+#   Named keywords:      'now', 'today', 'yesterday', 'last week',
+#                        'last month', 'last year'
+#   Numeric:             '1715000000', '1715000000.5'  (Unix timestamp)
+
+_UNIT_SECONDS: Dict[str, int] = {
+    "s": 1,
+    "sec": 1,
+    "secs": 1,
+    "second": 1,
+    "seconds": 1,
+    "m": 60,
+    "min": 60,
+    "mins": 60,
+    "minute": 60,
+    "minutes": 60,
+    "h": 3600,
+    "hr": 3600,
+    "hrs": 3600,
+    "hour": 3600,
+    "hours": 3600,
+    "d": 86400,
+    "day": 86400,
+    "days": 86400,
+    "w": 604800,
+    "wk": 604800,
+    "wks": 604800,
+    "week": 604800,
+    "weeks": 604800,
+}
+
+_NAMED_OFFSETS: Dict[str, int] = {
+    "now": 0,
+    "today": 0,
+    "yesterday": 86400,
+    "last week": 604800,
+    "past week": 604800,
+    "last month": 2592000,  # ~30 days
+    "past month": 2592000,
+    "last year": 31536000,  # 365 days
+    "past year": 31536000,
+}
+
+_WRAPPER_PREFIX_RE = re.compile(
+    r"^(?:the\s+)?(?:last|past|previous|within\s+the\s+last)\s+"
+)
+_WRAPPER_SUFFIX_RE = re.compile(r"\s+ago$")
+_LEADING_MINUS_RE = re.compile(r"^-\s*")
+_AN_PREFIX_RE = re.compile(r"^(?:a|an)\s+")
+_NUM_UNIT_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*([a-z]+)$")
+
+
 def _parse_relative_time(value: str, reference_time: Optional[float] = None) -> float:
-    """Parse relative time strings like ``'-10m'``, ``'-1h'``, ``'-2d'``
-    into absolute timestamps.
+    """Parse a human-friendly time expression into an absolute Unix timestamp.
+
+    Accepts the canonical sugarcoat-style ``-10m`` form, a range of
+    natural-language variants (``'10 minutes ago'``, ``'last hour'``,
+    ``'yesterday'``), and numeric Unix timestamps. Returns the absolute
+    timestamp the expression resolves to.
 
     :param value: Time string or numeric timestamp.
-    :param reference_time: Reference point for relative values.
-    :returns: Absolute timestamp as float.
-    :rtype: float
+    :param reference_time: "Now" reference for relative values.
+    :returns: Absolute Unix timestamp as float.
+    :raises ValueError: if ``value`` cannot be parsed.
     """
-    ref = reference_time or time.time()
-    match = re.match(r"^-(\d+(?:\.\d+)?)\s*([smhd])$", value.strip())
-    if not match:
+    ref = reference_time if reference_time is not None else time.time()
+    v = value.strip().lower()
+
+    if not v:
+        raise ValueError(f"Cannot parse empty time string: {value!r}")
+
+    # Named offsets first — exact match.
+    if v in _NAMED_OFFSETS:
+        return ref - _NAMED_OFFSETS[v]
+
+    # Strip conversational wrappers and any leading minus.
+    stripped = _WRAPPER_PREFIX_RE.sub("", v)
+    stripped = _WRAPPER_SUFFIX_RE.sub("", stripped)
+    stripped = _LEADING_MINUS_RE.sub("", stripped)
+    stripped = _AN_PREFIX_RE.sub("1 ", stripped)
+
+    # <number> <unit>  (whitespace optional)
+    m = _NUM_UNIT_RE.match(stripped)
+    if m:
+        amount = float(m.group(1))
+        unit = m.group(2)
+        secs = _UNIT_SECONDS.get(unit)
+        if secs is not None:
+            return ref - amount * secs
+
+    # Bare unit with the wrappers stripped implies "1 <unit>"
+    # (e.g. "hour", "day", "last minute").
+    if stripped in _UNIT_SECONDS:
+        return ref - _UNIT_SECONDS[stripped]
+
+    # Numeric Unix timestamp fallback.
+    try:
         return float(value)
-    amount = float(match.group(1))
-    unit = match.group(2)
-    multiplier = {"s": 1, "m": 60, "h": 3600, "d": 86400}
-    return ref - amount * multiplier[unit]
+    except ValueError as e:
+        raise ValueError(f"Cannot parse time string: {value!r}") from e
 
 
 def _format_observation(obs: Any, include_coords: bool = True) -> str:
@@ -597,202 +1204,7 @@ class MemoryTools:
 
     def _tool_schemas(self) -> List[Dict[str, Any]]:
         """Raw tool schemas (name/description/parameters only)."""
-        return [
-            {
-                "name": "semantic_search",
-                "description": "Search memory by meaning. Searches both recent observations and consolidated summaries.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "What to search for",
-                        },
-                        "n_results": {"type": "integer", "default": 10},
-                        "layer": {
-                            "type": "string",
-                            "description": "Filter by layer name",
-                        },
-                        "time_after": {
-                            "type": "string",
-                            "description": "After this time (e.g. '-10m', '-1h')",
-                        },
-                        "time_before": {
-                            "type": "string",
-                            "description": "Before this time",
-                        },
-                        "near_x": {
-                            "type": "number",
-                            "description": "X coordinate to search near",
-                        },
-                        "near_y": {
-                            "type": "number",
-                            "description": "Y coordinate to search near",
-                        },
-                        "spatial_radius": {
-                            "type": "number",
-                            "description": "Radius in meters",
-                        },
-                        "episode_id": {"type": "string"},
-                    },
-                    "required": ["query"],
-                },
-            },
-            {
-                "name": "spatial_query",
-                "description": "Find observations within a radius of a point.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "x": {"type": "number"},
-                        "y": {"type": "number"},
-                        "z": {"type": "number", "default": 0.0},
-                        "radius": {"type": "number", "default": 2.0},
-                        "layer": {"type": "string"},
-                        "time_after": {"type": "string"},
-                        "time_before": {"type": "string"},
-                        "n_results": {"type": "integer", "default": 10},
-                    },
-                    "required": ["x", "y"],
-                },
-            },
-            {
-                "name": "temporal_query",
-                "description": "Find observations in a time range, chronologically ordered. Falls back to consolidated summaries if raw observations have been archived.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "time_after": {"type": "string"},
-                        "time_before": {"type": "string"},
-                        "last_n_minutes": {"type": "number"},
-                        "layer": {"type": "string"},
-                        "near_x": {"type": "number"},
-                        "near_y": {"type": "number"},
-                        "spatial_radius": {"type": "number"},
-                        "order": {
-                            "type": "string",
-                            "enum": ["newest", "oldest"],
-                            "default": "newest",
-                        },
-                        "n_results": {"type": "integer", "default": 10},
-                    },
-                },
-            },
-            {
-                "name": "episode_summary",
-                "description": "Get summary of episode(s).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "episode_id": {"type": "string"},
-                        "task_name": {"type": "string"},
-                        "last_n": {"type": "integer", "default": 1},
-                    },
-                },
-            },
-            {
-                "name": "get_current_context",
-                "description": "Get situational awareness: what's nearby and recent activity.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "radius": {"type": "number", "default": 3.0},
-                        "include_recent_minutes": {"type": "number", "default": 5.0},
-                    },
-                },
-            },
-            {
-                "name": "search_gists",
-                "description": "Search consolidated memory summaries (long-term memory).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "n_results": {"type": "integer", "default": 10},
-                        "time_after": {"type": "string"},
-                        "time_before": {"type": "string"},
-                    },
-                    "required": ["query"],
-                },
-            },
-            {
-                "name": "entity_query",
-                "description": "Find known entities (objects, people, landmarks). Entities are auto-tracked across observations.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "name": {
-                            "type": "string",
-                            "description": "Name substring match",
-                        },
-                        "entity_type": {
-                            "type": "string",
-                            "description": "Type filter (e.g. 'furniture')",
-                        },
-                        "near_x": {"type": "number"},
-                        "near_y": {"type": "number"},
-                        "spatial_radius": {"type": "number"},
-                        "last_seen_after": {
-                            "type": "string",
-                            "description": "e.g. '-10m'",
-                        },
-                        "n_results": {"type": "integer", "default": 10},
-                    },
-                },
-            },
-            {
-                "name": "locate",
-                "description": "Find the spatial location of a concept (e.g. 'kitchen', 'charging station'). Returns centroid coordinates and spread radius.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "concept": {"type": "string", "description": "What to locate"},
-                        "n_results": {"type": "integer", "default": 10},
-                        "layer": {
-                            "type": "string",
-                            "description": "Filter by layer name",
-                        },
-                        "time_after": {"type": "string"},
-                        "time_before": {"type": "string"},
-                    },
-                    "required": ["concept"],
-                },
-            },
-            {
-                "name": "recall",
-                "description": "Recall everything known about a concept. Locates it spatially, then gathers cross-layer observations, gists, and entities from that area.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "What to recall (e.g. 'kitchen', 'the red chair')",
-                        },
-                        "n_results": {"type": "integer", "default": 10},
-                        "radius_multiplier": {
-                            "type": "number",
-                            "default": 1.5,
-                            "description": "Multiplier for search radius around located area",
-                        },
-                    },
-                    "required": ["query"],
-                },
-            },
-            {
-                "name": "body_status",
-                "description": "Get the latest body/internal state readings (battery, temperature, joint health, etc.).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "layers": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Filter to specific body-state layers (e.g. ['battery', 'cpu_temp'])",
-                        },
-                    },
-                },
-            },
-        ]
+        return list(TOOL_SCHEMAS.values())
 
     def dispatch_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Dispatch a tool call by name.
