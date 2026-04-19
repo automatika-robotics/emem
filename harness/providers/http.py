@@ -87,20 +87,33 @@ def post_json_with_retry(
 
 
 def strip_think_tags(text: str) -> str:
-    """Remove ``<think>...</think>`` blocks emitted by reasoning models.
+    """Remove model-internal reasoning blocks from raw output.
 
-    Also strips orphaned ``</think>`` tags and trailing ``<think>`` blocks
+    Handles:
+    - Qwen / DeepSeek: ``<think>...</think>``
+    - Gemma 4: ``<|channel>...<channel|>`` and other control tokens
+
+    Also strips orphaned opening/closing tags and trailing blocks
     that were never closed (model cut off mid-thought).
 
     :param text: Raw model output.
-    :returns: Text with thinking blocks stripped.
+    :returns: Text with reasoning/control blocks stripped.
     """
-    # Full <think>...</think> blocks
+    # Qwen / DeepSeek: <think>...</think>
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-    # Unclosed <think> at end of output
     text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL)
-    # Orphaned </think> tag
     text = text.replace("</think>", "")
+
+    # Gemma 4: <|channel>...<channel|>
+    text = re.sub(r"<\|channel>.*?<channel\|>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<\|channel>.*$", "", text, flags=re.DOTALL)
+    text = text.replace("<channel|>", "")
+
+    # Gemma 4: stray turn/tool tokens that leak through
+    text = re.sub(r"<\|tool_call>.*?<tool_call\|>", "", text, flags=re.DOTALL)
+    text = text.replace("<turn|>", "")
+    text = text.replace("<|turn>", "")
+
     return text.strip()
 
 
