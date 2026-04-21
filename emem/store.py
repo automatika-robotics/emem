@@ -159,6 +159,13 @@ class MemoryStore:
                 has_embedding INTEGER NOT NULL DEFAULT 0
             );
 
+            CREATE VIRTUAL TABLE IF NOT EXISTS fts_index USING fts5(
+                node_id UNINDEXED,
+                node_type UNINDEXED,
+                text,
+                tokenize='porter unicode61'
+            );
+
             CREATE INDEX IF NOT EXISTS idx_entity_name ON entities(name);
             CREATE INDEX IF NOT EXISTS idx_entity_type ON entities(entity_type);
             CREATE INDEX IF NOT EXISTS idx_entity_last_seen ON entities(last_seen);
@@ -217,8 +224,72 @@ class MemoryStore:
         return clause, params
 
     def _next_hnsw_id(self) -> int:
+        """Allocate the next monotonic integer ID for HNSW insertions."""
         self._hnsw_counter += 1
         return self._hnsw_counter
+
+    @staticmethod
+    def _fts_escape_query(query: str) -> str:
+        """Sanitise a raw query string for FTS5's MATCH clause.
+
+        FTS5 treats certain characters (``"`` ``-`` ``(`` ``)`` ``*``
+        ``:`` ``AND`` ``OR`` ``NOT`` ``NEAR``) as operators; an
+        unsanitised user query that contains them will either error
+        or silently change semantics. The safest escape for a
+        free-text query is to double-quote the whole thing and
+        double any internal double-quotes.
+        """
+        cleaned = query.replace('"', '""').strip()
+        if not cleaned:
+            return '""'
+        return f'"{cleaned}"'
+
+    def _bm25_search_ids(
+        self,
+        query: str,
+        node_type: str,
+        fetch_k: int,
+    ) -> List[str]:
+        """Return node IDs ranked by BM25 relevance for ``query``.
+
+        :param query: Raw user query; escaped before use.
+        :param node_type: ``"observation"`` or ``"gist"``.
+        :param fetch_k: Maximum number of IDs to return.
+        :returns: Ranked list of node IDs (best first). Empty when
+            hybrid retrieval is disabled, the FTS table is empty,
+            or no match is found.
+        """
+        if not self.config.use_hybrid_retrieval or fetch_k <= 0:
+            return []
+        escaped = self._fts_escape_query(query)
+        rows = self._db.execute(
+            "SELECT node_id FROM fts_index "
+            "WHERE fts_index MATCH ? AND node_type = ? "
+            "ORDER BY rank LIMIT ?",
+            (f"text:{escaped}", node_type, fetch_k),
+        ).fetchall()
+        return [r["node_id"] for r in rows]
+
+    @staticmethod
+    def _rrf_merge(
+        sources: List[List[str]],
+        k: int = 60,
+    ) -> List[str]:
+        """Reciprocal-rank-fuse several ranked-id lists into one ranking.
+
+        Score for doc *d* is $\\sum_{\\mathrm{source}} 1/(k + rank_d)$,
+        where ranks are 1-based and a doc missing from a source
+        contributes zero. IDs are returned best-first.
+
+        :param sources: Each source is a rank-ordered list of IDs.
+        :param k: RRF constant (60 is the de-facto default).
+        :returns: Fused ranking, best first, deduplicated.
+        """
+        scores: Dict[str, float] = {}
+        for src in sources:
+            for rank, doc_id in enumerate(src, start=1):
+                scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (k + rank)
+        return sorted(scores, key=lambda d: scores[d], reverse=True)
 
     def _add_to_hnsw(
         self, str_id: str, embedding: np.ndarray, node_type: str = "observation"
@@ -238,6 +309,31 @@ class MemoryStore:
         self._db.execute(
             "INSERT OR REPLACE INTO hnsw_mappings (int_id, str_id, node_type) VALUES (?, ?, ?)",
             (int_id, str_id, node_type),
+        )
+
+    def _fts_insert(self, node_id: str, node_type: str, text: str) -> None:
+        """Add a node's text to the BM25 full-text index.
+
+        :param node_id: Node UUID.
+        :param node_type: ``"observation"`` or ``"gist"``.
+        :param text: The indexable text; skipped if empty.
+        """
+        if not text:
+            return
+        self._db.execute(
+            "INSERT INTO fts_index (node_id, node_type, text) VALUES (?, ?, ?)",
+            (node_id, node_type, text),
+        )
+
+    def _fts_delete(self, node_id: str, node_type: str) -> None:
+        """Remove a node from the BM25 full-text index.
+
+        :param node_id: Node UUID.
+        :param node_type: ``"observation"`` or ``"gist"``.
+        """
+        self._db.execute(
+            "DELETE FROM fts_index WHERE node_id = ? AND node_type = ?",
+            (node_id, node_type),
         )
 
     def _remove_from_hnsw(self, str_id: str) -> None:
@@ -296,6 +392,7 @@ class MemoryStore:
                 if obs.embedding is not None:
                     self._add_to_hnsw(obs.id, obs.embedding, "observation")
 
+                self._fts_insert(obs.id, "observation", obs.text)
                 self._spatial.insert(obs.id, np.array([x, y, z]))
 
                 if obs.episode_id:
@@ -407,6 +504,8 @@ class MemoryStore:
             if gist.embedding is not None:
                 self._add_to_hnsw(gist.id, gist.embedding, "gist")
 
+            self._fts_insert(gist.id, "gist", gist.text)
+
             for obs_id in gist.source_observation_ids:
                 self._add_edge(
                     Edge(
@@ -449,6 +548,7 @@ class MemoryStore:
                         (tier, obs_id),
                     )
                     self._remove_from_hnsw(obs_id)
+                    self._fts_delete(obs_id, "observation")
                     row = self._db.execute(
                         "SELECT x, y, z FROM observations WHERE id = ?", (obs_id,)
                     ).fetchone()
@@ -598,14 +698,39 @@ class MemoryStore:
             self._spatial.insert(entity.id, np.array([x, y, z]))
             self._db.commit()
 
-    def find_matching_entity(
+    def find_matching_entity(  # noqa: C901  # TODO: split into helpers
         self,
         name: str,
         coordinates: np.ndarray,
         embedding: Optional[np.ndarray] = None,
+        context_embedding: Optional[np.ndarray] = None,
     ) -> Optional[EntityNode]:
+        """Return an existing entity to merge with, or ``None`` for a new one.
+
+        Matching requires (a) name-embedding cosine above
+        ``entity_similarity_threshold`` and (b) spatial distance below
+        ``entity_spatial_radius``. When ``context_embedding`` is
+        supplied, a third constraint is added: the candidate's source
+        observation text must also have cosine similarity above
+        ``entity_text_similarity_threshold`` with ``context_embedding``.
+        This prevents confident false merges when two objects happen to
+        share a generic name ("chair", "door") but appear in very
+        different contexts.
+
+        :param name: Candidate entity name.
+        :param coordinates: Candidate position.
+        :param embedding: Precomputed name embedding; derived from
+            ``name`` when absent.
+        :param context_embedding: Embedding of the observation text that
+            the candidate entity was extracted from. When supplied,
+            merges are gated on context similarity.
+        :returns: Matching entity, or ``None`` if no candidate passes
+            all constraints.
+        """
         if embedding is None and self._auto_embed:
             embedding = self.embedding_provider.embed([name])[0]
+
+        text_threshold = self.config.entity_text_similarity_threshold
 
         if embedding is not None and self._hnsw.get_current_count() > 0:
             live_count = len(self._hnsw_id_map)
@@ -646,8 +771,14 @@ class MemoryStore:
                         dist_spatial = float(
                             np.linalg.norm(entity.coordinates - coords_xyz)
                         )
-                        if dist_spatial <= self.config.entity_spatial_radius:
-                            return entity
+                        if dist_spatial > self.config.entity_spatial_radius:
+                            continue
+                        if context_embedding is not None:
+                            if not self._context_similarity_passes(
+                                entity.id, context_embedding, text_threshold
+                            ):
+                                continue
+                        return entity
 
         # Fallback: exact name match within spatial radius
         clause, dist_params = self._spatial_filter_sql(
@@ -658,9 +789,41 @@ class MemoryStore:
             "SELECT * FROM entities WHERE name = ? AND " + clause,
             [name] + dist_params,
         ).fetchall()
-        if rows:
-            return self._row_to_entity(rows[0])
+        for row in rows:
+            entity = self._row_to_entity(row)
+            if context_embedding is not None:
+                if not self._context_similarity_passes(
+                    entity.id, context_embedding, text_threshold
+                ):
+                    continue
+            return entity
         return None
+
+    def _context_similarity_passes(
+        self,
+        entity_id: str,
+        context_embedding: np.ndarray,
+        threshold: float,
+    ) -> bool:
+        """Return ``True`` iff the entity's source-observation embedding
+        has cosine similarity with ``context_embedding`` above
+        ``threshold``. When the entity has no stored source observation
+        embedding yet, the check defers to ``True`` (we do not block a
+        merge on missing data).
+        """
+        source_id = self.get_entity_context_obs_id(entity_id)
+        if source_id is None:
+            return True
+        stored = self.get_hnsw_embedding(source_id)
+        if stored is None:
+            return True
+        a = context_embedding.astype(np.float32)
+        b = stored.astype(np.float32)
+        denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+        if denom == 0.0:
+            return True
+        cosine = float(np.dot(a, b) / denom)
+        return cosine >= threshold
 
     def query_entities(
         self,
@@ -787,6 +950,45 @@ class MemoryStore:
         ).fetchone()
         return self._row_to_observation(row) if row else None
 
+    def get_hnsw_embedding(self, str_id: str) -> Optional[np.ndarray]:
+        """Return the embedding currently stored in HNSW for a given node.
+
+        :param str_id: Observation / gist / entity UUID.
+        :returns: The stored embedding as a 1-D array, or ``None`` if
+            the node has no HNSW entry.
+        """
+        int_id = self._hnsw_str_map.get(str_id)
+        if int_id is None:
+            return None
+        try:
+            items = self._hnsw.get_items([int_id])
+        except RuntimeError:
+            return None
+        return np.asarray(items[0], dtype=np.float32) if len(items) else None
+
+    def get_entity_context_obs_id(self, entity_id: str) -> Optional[str]:
+        """Return the observation id backing the entity's source context.
+
+        Uses the most recent ``OBSERVED_IN`` edge (by observation
+        timestamp). That observation's text embedding is the one we
+        compare against when deciding whether a new observation should
+        merge into the entity.
+
+        :param entity_id: Entity UUID.
+        :returns: Source observation UUID, or ``None`` if the entity has
+            no observations.
+        """
+        row = self._db.execute(
+            """
+            SELECT o.id FROM edges e
+            JOIN observations o ON e.target_id = o.id
+            WHERE e.source_id = ? AND e.edge_type = 'observed_in'
+            ORDER BY o.timestamp DESC LIMIT 1
+            """,
+            (entity_id,),
+        ).fetchone()
+        return row["id"] if row else None
+
     def get_episode(self, episode_id: str) -> Optional[EpisodeNode]:
         row = self._db.execute(
             "SELECT * FROM episodes WHERE id = ?", (episode_id,)
@@ -859,9 +1061,9 @@ class MemoryStore:
         :rtype: List[Union[ObservationNode, GistNode, EntityNode]]
         """
         query_emb = self.embedding_provider.embed([query])[0]
-        return self.semantic_search_by_vector(
+        hnsw_hits = self.semantic_search_by_vector(
             query_emb,
-            n_results,
+            n_results if not self.config.use_hybrid_retrieval else n_results * 2,
             layer,
             time_range,
             spatial_center,
@@ -869,6 +1071,83 @@ class MemoryStore:
             episode_id,
             reference_time,
         )
+        if not self.config.use_hybrid_retrieval:
+            return hnsw_hits[:n_results]
+
+        fetch_k = max(n_results * 2, 10)
+        bm25_obs_ids = self._bm25_search_ids(query, "observation", fetch_k)
+        bm25_gist_ids = self._bm25_search_ids(query, "gist", fetch_k)
+        bm25_hits = self._materialise_hybrid_candidates(
+            bm25_obs_ids,
+            bm25_gist_ids,
+            layer=layer,
+            time_range=time_range,
+            spatial_center=spatial_center,
+            spatial_radius=spatial_radius,
+            episode_id=episode_id,
+        )
+
+        def _key(node: Any) -> str:
+            return f"{type(node).__name__}:{node.id}"
+
+        hnsw_rank = [_key(n) for n in hnsw_hits]
+        bm25_rank = [_key(n) for n in bm25_hits]
+        fused = self._rrf_merge([hnsw_rank, bm25_rank], k=self.config.rrf_k)
+
+        by_key: Dict[str, Any] = {_key(n): n for n in (hnsw_hits + bm25_hits)}
+        return [by_key[k] for k in fused[:n_results] if k in by_key]
+
+    def _materialise_hybrid_candidates(
+        self,
+        obs_ids: List[str],
+        gist_ids: List[str],
+        *,
+        layer: Optional[str] = None,
+        time_range: Optional[Tuple[float, float]] = None,
+        spatial_center: Optional[np.ndarray] = None,
+        spatial_radius: Optional[float] = None,
+        episode_id: Optional[str] = None,
+    ) -> List[Union[ObservationNode, GistNode]]:
+        """Fetch full nodes for BM25-returned IDs and drop any that
+        fail the same filter set the HNSW path applies.
+        """
+        out: List[Union[ObservationNode, GistNode]] = []
+        for obs_id in obs_ids:
+            obs = self.get_observation(obs_id)
+            if obs is None:
+                continue
+            if obs.tier == Tier.ARCHIVED.value or not obs.text:
+                continue
+            if layer is not None and obs.layer_name != layer:
+                continue
+            if time_range is not None and not (
+                time_range[0] <= obs.timestamp <= time_range[1]
+            ):
+                continue
+            if episode_id is not None and obs.episode_id != episode_id:
+                continue
+            if spatial_center is not None and spatial_radius is not None:
+                dist = float(np.linalg.norm(obs.coordinates - spatial_center))
+                if dist > spatial_radius:
+                    continue
+            out.append(obs)
+
+        for gist_id in gist_ids:
+            gist = self.get_gist(gist_id)
+            if gist is None:
+                continue
+            if time_range is not None and not (
+                time_range[0] <= gist.time_end and gist.time_start <= time_range[1]
+            ):
+                continue
+            if episode_id is not None and gist.episode_id != episode_id:
+                continue
+            if spatial_center is not None and spatial_radius is not None:
+                dist = float(np.linalg.norm(gist.center_position - spatial_center))
+                if dist > spatial_radius + gist.radius:
+                    continue
+            out.append(gist)
+        return out
 
     def semantic_search_by_vector(  # noqa: C901  # TODO: split into helpers
         self,
@@ -1238,32 +1517,45 @@ class MemoryStore:
         :rtype: List[GistNode]
         """
         query_emb = self.embedding_provider.embed([query])[0]
-        if self._hnsw.get_current_count() == 0:
+
+        hnsw_ranked: List[str] = []
+        if self._hnsw.get_current_count() > 0:
+            fetch_k = min(max(n_results * 5, 20), self._hnsw.get_current_count())
+            labels, _ = self._hnsw.knn_query(query_emb.reshape(1, -1), k=fetch_k)
+            for label in labels[0]:
+                str_id = self._hnsw_id_map.get(int(label))
+                if str_id:
+                    hnsw_ranked.append(str_id)
+
+        bm25_ranked: List[str] = []
+        if self.config.use_hybrid_retrieval:
+            bm25_ranked = self._bm25_search_ids(query, "gist", max(n_results * 5, 20))
+
+        if not hnsw_ranked and not bm25_ranked:
             return []
 
-        fetch_k = min(n_results * 5, self._hnsw.get_current_count())
-        labels, _ = self._hnsw.knn_query(query_emb.reshape(1, -1), k=fetch_k)
+        # Fuse the two rankings. When hybrid retrieval is off the BM25
+        # list is empty and the result degenerates to the HNSW ranking.
+        ranked_ids = self._rrf_merge([hnsw_ranked, bm25_ranked], k=self.config.rrf_k)
+        # The HNSW set mixed observation/gist IDs; keep only gists here.
+        gist_id_set = {
+            r["id"] for r in self._db.execute("SELECT id FROM gists").fetchall()
+        }
+        ranked_ids = [rid for rid in ranked_ids if rid in gist_id_set]
 
-        candidate_ids = []
-        for label in labels[0]:
-            str_id = self._hnsw_id_map.get(int(label))
-            if str_id:
-                candidate_ids.append(str_id)
-
-        if not candidate_ids:
+        if not ranked_ids:
             return []
 
-        placeholders = ",".join("?" * len(candidate_ids))
+        placeholders = ",".join("?" * len(ranked_ids))
         query_sql = "SELECT * FROM gists WHERE id IN (%s)" % placeholders
-        params: list = list(candidate_ids)
-
+        params: list = list(ranked_ids)
         if time_range:
             query_sql += " AND time_start >= ? AND time_end <= ?"
             params.extend(time_range)
 
         rows = self._db.execute(query_sql, params).fetchall()
         results = [self._row_to_gist(r) for r in rows]
-        id_order = {sid: i for i, sid in enumerate(candidate_ids)}
+        id_order = {sid: i for i, sid in enumerate(ranked_ids)}
         results.sort(key=lambda g: id_order.get(g.id, 9999))
         return results[:n_results]
 
