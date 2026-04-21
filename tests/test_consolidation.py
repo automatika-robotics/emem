@@ -519,3 +519,341 @@ class TestEarlyEntityExtraction:
 
         mem.end_episode()
         mem.close()
+
+
+class AttributedEntityExtractor:
+    """Fake summarizer that returns per-observation entity attribution.
+
+    Mirrors the contract that ``LLMClient.extract_entities`` returns
+    after parsing: each entity carries a 0-based ``observation_index``
+    pointing into the batch. The LLM prompt uses 1-based indices for
+    human readability; ``_parse_entities`` converts them to 0-based
+    before this layer sees them.
+    """
+
+    def summarize(self, texts):
+        return " | ".join(texts)
+
+    def extract_entities(self, texts):
+        keywords = ("chair", "table", "lamp", "fridge")
+        out = []
+        for i, text in enumerate(texts):
+            for word in text.split():
+                if word in keywords:
+                    out.append({
+                        "name": word,
+                        "entity_type": "furniture",
+                        "confidence": 0.9,
+                        "observation_index": i,  # 0-based post-parser
+                    })
+        return out
+
+
+class TestPerObservationAttribution:
+    """A2: per-observation entity attribution + batch-link fallback."""
+
+    def test_parser_reads_observation_index(self):
+        from emem.consolidation import _parse_entities
+
+        raw = (
+            '[{"name":"chair","entity_type":"furniture","confidence":0.9,'
+            '"observation_index":2}]'
+        )
+        parsed = _parse_entities(raw)
+        assert len(parsed) == 1
+        assert parsed[0]["name"] == "chair"
+        assert parsed[0]["observation_index"] == 1  # 1-based -> 0-based
+
+    def test_parser_missing_index_is_none(self):
+        from emem.consolidation import _parse_entities
+
+        raw = '[{"name":"chair","entity_type":"furniture","confidence":0.9}]'
+        parsed = _parse_entities(raw)
+        assert parsed[0]["observation_index"] is None
+
+    def test_parser_rejects_bad_index_string(self):
+        from emem.consolidation import _parse_entities
+
+        raw = '[{"name":"chair","observation_index":"one"}]'
+        parsed = _parse_entities(raw)
+        assert parsed[0]["observation_index"] is None
+
+    def test_parser_rejects_zero_index(self):
+        """1-based input must be >= 1; 0 or negative means missing."""
+        from emem.consolidation import _parse_entities
+
+        raw = '[{"name":"chair","observation_index":0}]'
+        parsed = _parse_entities(raw)
+        assert parsed[0]["observation_index"] is None
+
+    def test_attributed_entity_links_to_single_observation(self, store):
+        """With per-obs attribution, OBSERVED_IN points only at the
+        attributed observation, not at every observation in the batch."""
+        config = SpatioTemporalMemoryConfig(
+            consolidation_window=100.0, consolidation_min_samples=2
+        )
+        engine = ConsolidationEngine(
+            store=store, config=config, llm_client=AttributedEntityExtractor()
+        )
+
+        ep_id = store.start_episode("test", 1000.0)
+        chair_obs = _obs("saw a chair", x=5.0, y=5.0, ts=1001.0, episode_id=ep_id)
+        table_obs = _obs("spotted a table", x=10.0, y=10.0, ts=1002.0, episode_id=ep_id)
+        store.add_observation(chair_obs)
+        store.add_observation(table_obs)
+        store.end_episode(ep_id, 1003.0)
+
+        engine.consolidate_episode(ep_id)
+
+        chair = [e for e in store.query_entities() if e.name == "chair"][0]
+        table = [e for e in store.query_entities() if e.name == "table"][0]
+
+        chair_edges = store.get_edges(
+            source_id=chair.id, edge_type=EdgeType.OBSERVED_IN
+        )
+        table_edges = store.get_edges(
+            source_id=table.id, edge_type=EdgeType.OBSERVED_IN
+        )
+        assert len(chair_edges) == 1
+        assert chair_edges[0].target_id == chair_obs.id
+        assert len(table_edges) == 1
+        assert table_edges[0].target_id == table_obs.id
+
+    def test_attributed_entity_uses_observation_coords(self, store):
+        """Entity coordinates should come from its source observation,
+        not the batch centroid."""
+        config = SpatioTemporalMemoryConfig(
+            consolidation_window=100.0, consolidation_min_samples=2
+        )
+        engine = ConsolidationEngine(
+            store=store, config=config, llm_client=AttributedEntityExtractor()
+        )
+
+        ep_id = store.start_episode("test", 1000.0)
+        store.add_observation(
+            _obs("saw a chair", x=5.0, y=5.0, ts=1001.0, episode_id=ep_id)
+        )
+        store.add_observation(
+            _obs("spotted a table", x=50.0, y=50.0, ts=1002.0, episode_id=ep_id)
+        )
+        store.end_episode(ep_id, 1003.0)
+        engine.consolidate_episode(ep_id)
+
+        chair = [e for e in store.query_entities() if e.name == "chair"][0]
+        assert abs(chair.coordinates[0] - 5.0) < 0.01
+        assert abs(chair.coordinates[1] - 5.0) < 0.01
+
+        table = [e for e in store.query_entities() if e.name == "table"][0]
+        assert abs(table.coordinates[0] - 50.0) < 0.01
+
+    def test_attributed_entity_count_starts_at_one(self, store):
+        """Per-observation attribution means observation_count starts at 1,
+        not at batch size."""
+        config = SpatioTemporalMemoryConfig(
+            consolidation_window=100.0, consolidation_min_samples=2
+        )
+        engine = ConsolidationEngine(
+            store=store, config=config, llm_client=AttributedEntityExtractor()
+        )
+
+        ep_id = store.start_episode("test", 1000.0)
+        for i in range(4):
+            store.add_observation(
+                _obs(
+                    f"object {i}",
+                    x=float(i),
+                    y=0.0,
+                    ts=1001.0 + i,
+                    episode_id=ep_id,
+                )
+            )
+        store.add_observation(
+            _obs("saw a chair", x=100.0, y=100.0, ts=1005.0, episode_id=ep_id)
+        )
+        store.end_episode(ep_id, 1006.0)
+        engine.consolidate_episode(ep_id)
+
+        chair = [e for e in store.query_entities() if e.name == "chair"][0]
+        # Only one observation mentions "chair", so count should be 1.
+        assert chair.observation_count == 1
+
+    def test_fallback_batch_links_when_index_missing(self, store, caplog):
+        """When the LLM omits observation_index, fall back to linking
+        every entity to every observation in the batch (previous
+        behaviour), and emit a warning."""
+        import logging
+
+        config = SpatioTemporalMemoryConfig(
+            consolidation_window=100.0, consolidation_min_samples=2
+        )
+        engine = ConsolidationEngine(
+            store=store,
+            config=config,
+            llm_client=FakeEntityExtractor(),  # no observation_index
+        )
+
+        ep_id = store.start_episode("test", 1000.0)
+        store.add_observation(
+            _obs("saw a chair", x=5.0, y=5.0, ts=1001.0, episode_id=ep_id)
+        )
+        store.add_observation(
+            _obs("nothing here", x=5.5, y=5.5, ts=1002.0, episode_id=ep_id)
+        )
+        store.end_episode(ep_id, 1003.0)
+
+        with caplog.at_level(logging.WARNING, logger="emem.consolidation"):
+            engine.consolidate_episode(ep_id)
+
+        chair = [e for e in store.query_entities() if e.name == "chair"][0]
+        edges = store.get_edges(source_id=chair.id, edge_type=EdgeType.OBSERVED_IN)
+        # Fallback batch-links to both observations.
+        assert len(edges) == 2
+        assert any("observation_index" in r.message for r in caplog.records)
+
+    def test_cooccurrence_requires_same_observation(self, store):
+        """With attribution, two entities co-occur only if they came
+        from the same observation."""
+        config = SpatioTemporalMemoryConfig(
+            consolidation_window=100.0, consolidation_min_samples=2
+        )
+        engine = ConsolidationEngine(
+            store=store, config=config, llm_client=AttributedEntityExtractor()
+        )
+
+        ep_id = store.start_episode("test", 1000.0)
+        # Two observations; chair in the first, table in the second —
+        # they must NOT be marked as co-occurring.
+        store.add_observation(
+            _obs("saw a chair", x=5.0, y=5.0, ts=1001.0, episode_id=ep_id)
+        )
+        store.add_observation(
+            _obs("spotted a table", x=10.0, y=10.0, ts=1002.0, episode_id=ep_id)
+        )
+        store.end_episode(ep_id, 1003.0)
+        engine.consolidate_episode(ep_id)
+
+        chair = [e for e in store.query_entities() if e.name == "chair"][0]
+        cooc = store.get_cooccurring_entities(chair.id)
+        assert len(cooc) == 0
+
+        # Now a second episode where both are seen in the same observation
+        # (they co-occur).
+        ep2 = store.start_episode("together", 2000.0)
+        store.add_observation(
+            _obs(
+                "the chair and the table together",
+                x=1.0,
+                y=1.0,
+                ts=2001.0,
+                episode_id=ep2,
+            )
+        )
+        store.end_episode(ep2, 2002.0)
+        engine.consolidate_episode(ep2)
+
+        chair2 = [e for e in store.query_entities() if e.name == "chair"][0]
+        cooc2 = store.get_cooccurring_entities(chair2.id)
+        assert any(e.name == "table" for e in cooc2)
+
+
+class TestContextAwareEntityMerge:
+    """A3: merges gated on observation-text cosine, not name cosine alone."""
+
+    def _merge_and_list(self, tmp_path, threshold, obs_a_text, obs_b_text):
+        """Helper: ingest two observations that share the entity name
+        ``chair`` under different contexts, run entity extraction, and
+        return the final list of ``chair`` entities in the store."""
+        from emem import SpatioTemporalMemory
+
+        config = SpatioTemporalMemoryConfig(
+            db_path=str(tmp_path / "ctx.db"),
+            hnsw_path=str(tmp_path / "ctx_hnsw.bin"),
+            embedding_dim=4,
+            flush_batch_size=1,  # each obs extracted immediately
+            entity_text_similarity_threshold=threshold,
+            entity_spatial_radius=10.0,
+        )
+
+        class _ControlledEmbedder:
+            """Deterministic embedder: name embeds share one direction,
+            observation texts split into two clusters so context cosine
+            distinguishes them."""
+
+            dim = 4
+
+            def embed(self, texts):
+                out = np.zeros((len(texts), 4), dtype=np.float32)
+                for i, t in enumerate(texts):
+                    if t == "chair":
+                        out[i] = np.array([1.0, 0.0, 0.0, 0.0])
+                    elif t == obs_a_text:
+                        out[i] = np.array([0.0, 1.0, 0.0, 0.0])
+                    elif t == obs_b_text:
+                        out[i] = np.array([0.0, 0.0, 1.0, 0.0])
+                    else:
+                        out[i] = np.array([0.0, 0.0, 0.0, 1.0])
+                return out
+
+        class _FakeLLM:
+            def summarize(self, texts):
+                return " | ".join(texts)
+
+            def extract_entities(self, texts):
+                # One entity per observation — attributed.
+                return [
+                    {
+                        "name": "chair",
+                        "entity_type": "furniture",
+                        "confidence": 0.9,
+                        "observation_index": i,
+                    }
+                    for i in range(len(texts))
+                ]
+
+        mem = SpatioTemporalMemory(
+            config=config,
+            embedding_provider=_ControlledEmbedder(),
+            llm_client=_FakeLLM(),
+        )
+        mem.start_episode("ctx_test")
+        mem.add(obs_a_text, x=0.0, y=0.0, timestamp=1000.0)
+        mem.add(obs_b_text, x=1.0, y=1.0, timestamp=1001.0)
+        mem.end_episode(consolidate=False)
+        entities = mem.store.query_entities(name="chair")
+        mem.close()
+        return entities
+
+    def test_context_dissimilar_prevents_merge(self, tmp_path):
+        """Two 'chair' observations whose embeddings are orthogonal
+        (cosine=0) must NOT merge when the threshold is above zero."""
+        entities = self._merge_and_list(
+            tmp_path,
+            threshold=0.5,
+            obs_a_text="kitchen chair",
+            obs_b_text="bedroom chair",
+        )
+        # Should be two distinct chair entities, not one.
+        assert len(entities) == 2
+
+    def test_context_zero_threshold_allows_merge(self, tmp_path):
+        """Threshold at zero should reproduce pre-A3 behaviour: name +
+        spatial alone decide, so the two chairs collapse into one."""
+        entities = self._merge_and_list(
+            tmp_path,
+            threshold=0.0,
+            obs_a_text="kitchen chair",
+            obs_b_text="bedroom chair",
+        )
+        assert len(entities) == 1
+        assert entities[0].observation_count == 2
+
+    def test_context_similar_allows_merge(self, tmp_path):
+        """Two observations with the same context text should merge."""
+        entities = self._merge_and_list(
+            tmp_path,
+            threshold=0.5,
+            obs_a_text="kitchen chair",
+            obs_b_text="kitchen chair",  # identical => cosine = 1
+        )
+        assert len(entities) == 1
+        assert entities[0].observation_count == 2

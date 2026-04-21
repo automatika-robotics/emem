@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import time
 from typing import Any, Callable, Dict, List, Optional, Protocol
@@ -8,6 +9,8 @@ import numpy as np
 from emem.config import SpatioTemporalMemoryConfig
 from emem.store import MemoryStore
 from emem.types import Edge, EdgeType, EntityNode, GistNode, ObservationNode, Tier
+
+log = logging.getLogger(__name__)
 
 
 class LLMClient(Protocol):
@@ -46,7 +49,9 @@ def _parse_entities(raw: str) -> List[Dict[str, Any]]:
     """Parse a JSON entity array from LLM output.
 
     Extracts the first ``[...]`` block from *raw* and returns a list of
-    entity dicts with keys ``name``, ``entity_type``, ``confidence``.
+    entity dicts with keys ``name``, ``entity_type``, ``confidence``,
+    and ``observation_index`` (0-based, or ``None`` when the model did
+    not supply an index).
     """
     match = re.search(r"\[.*\]", raw, re.DOTALL)
     if not match:
@@ -55,15 +60,28 @@ def _parse_entities(raw: str) -> List[Dict[str, Any]]:
         entities = json.loads(match.group())
     except json.JSONDecodeError:
         return []
-    return [
-        {
+    out: List[Dict[str, Any]] = []
+    for e in entities:
+        if not (isinstance(e, dict) and e.get("name")):
+            continue
+        raw_idx = e.get("observation_index")
+        obs_idx: Optional[int]
+        if raw_idx is None:
+            obs_idx = None
+        else:
+            try:
+                obs_idx = int(raw_idx) - 1  # 1-based in prompt, 0-based internally
+                if obs_idx < 0:
+                    obs_idx = None
+            except (TypeError, ValueError):
+                obs_idx = None
+        out.append({
             "name": str(e["name"]),
             "entity_type": e.get("entity_type"),
             "confidence": float(e.get("confidence") or 1.0),
-        }
-        for e in entities
-        if isinstance(e, dict) and e.get("name")
-    ]
+            "observation_index": obs_idx,
+        })
+    return out
 
 
 class InferenceLLMClient:
@@ -136,13 +154,24 @@ class InferenceLLMClient:
         )
 
     def extract_entities(self, texts: List[str]) -> List[Dict[str, Any]]:
-        """Extract named entities from observations."""
+        """Extract named entities from observations.
+
+        The prompt asks the model to tag each extracted entity with the
+        1-based index of the observation it came from
+        (``observation_index``) so the caller can link the entity to
+        that specific observation. When an entity genuinely spans
+        multiple observations the model is instructed to emit a
+        separate record per observation.
+        """
         numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
         raw = self._chat(
             "Extract named entities (objects, places, people) from these "
             "observations. Return ONLY a JSON array where each element has "
             'keys: "name" (string), "entity_type" (string or null), '
-            '"confidence" (float 0-1).\n\n' + numbered
+            '"confidence" (float 0-1), "observation_index" (integer, '
+            "1-based, indicating which numbered observation below this "
+            "entity came from). If the same entity appears in multiple "
+            "observations, emit one record per observation.\n\n" + numbered
         )
         return _parse_entities(raw)
 
@@ -393,7 +422,16 @@ class ConsolidationEngine:
     def _extract_and_merge_entities(
         self, observations: List[ObservationNode]
     ) -> List[str]:
-        """Extract entities from observations and merge them into the store."""
+        """Extract entities from observations and merge them into the store.
+
+        When the LLM supplies ``observation_index`` for each entity, the
+        entity is linked only to that specific observation and its
+        coordinates / timestamp come from that observation. When the
+        LLM omits the index we fall back to the earlier batch-link
+        behaviour (every entity linked to every observation in the
+        batch, coordinates at the batch centroid) and emit a warning,
+        so a non-compliant model is loud but not crashing.
+        """
         # Filter to only unprocessed observations
         unprocessed_ids = self.store.get_unextracted_obs_ids([
             obs.id for obs in observations
@@ -410,61 +448,123 @@ class ConsolidationEngine:
         if not raw_entities:
             return []
 
-        coords = np.array([obs.coordinates for obs in observations])
-        centroid = coords.mean(axis=0)
-        timestamps = [obs.timestamp for obs in observations]
+        text_to_obs: Dict[str, ObservationNode] = {
+            obs.text: obs for obs in observations if obs.text
+        }
+        texts_order = [obs.text for obs in observations if obs.text]
+
+        n_missing_idx = sum(
+            1 for r in raw_entities if r.get("observation_index") is None
+        )
+        if n_missing_idx == len(raw_entities):
+            log.warning(
+                "entity-extractor returned no observation_index for any of "
+                "%d entities; falling back to batch-link behaviour",
+                len(raw_entities),
+            )
+        elif n_missing_idx > 0:
+            log.warning(
+                "entity-extractor omitted observation_index for %d/%d "
+                "entities; those will fall back to batch-link",
+                n_missing_idx,
+                len(raw_entities),
+            )
 
         entity_ids: List[str] = []
+        per_entity_obs_idx: List[Optional[int]] = []
         edges: List[Edge] = []
+
+        batch_centroid = np.array([obs.coordinates for obs in observations]).mean(
+            axis=0
+        )
+        batch_timestamps = [obs.timestamp for obs in observations]
 
         for raw in raw_entities:
             name = raw["name"]
             entity_type = raw.get("entity_type")
             conf = raw.get("confidence", 1.0)
+            obs_idx = raw.get("observation_index")
 
-            existing = self.store.find_matching_entity(name, centroid)
+            if isinstance(obs_idx, int) and 0 <= obs_idx < len(texts_order):
+                attributed_obs = text_to_obs[texts_order[obs_idx]]
+                anchor_coords = attributed_obs.coordinates
+                anchor_layer = attributed_obs.layer_name
+                anchor_timestamp = attributed_obs.timestamp
+                linked_obs_ids = [attributed_obs.id]
+                contribution_count = 1
+                context_embedding = attributed_obs.embedding
+            else:
+                # Fallback: batch-link (previous behaviour).
+                attributed_obs = None
+                anchor_coords = batch_centroid
+                anchor_layer = _common_layer(observations, default="default")
+                anchor_timestamp = max(batch_timestamps)
+                linked_obs_ids = [obs.id for obs in observations]
+                contribution_count = len(observations)
+                context_embedding = None
+
+            existing = self.store.find_matching_entity(
+                name, anchor_coords, context_embedding=context_embedding
+            )
             if existing:
-                existing.coordinates = centroid
-                existing.last_seen = max(existing.last_seen, max(timestamps))
-                existing.first_seen = min(existing.first_seen, min(timestamps))
-                # TODO: observation_count uses len(observations) which is the full
-                # consolidation batch size, not per-entity sighting count. Every
-                # entity extracted from a batch gets the same count. Fix requires
-                # per-observation entity extraction or post-hoc edge counting.
-                existing.observation_count += len(observations)
+                existing.coordinates = anchor_coords
+                existing.last_seen = max(existing.last_seen, anchor_timestamp)
+                existing.first_seen = min(
+                    existing.first_seen,
+                    attributed_obs.timestamp
+                    if attributed_obs is not None
+                    else min(batch_timestamps),
+                )
+                existing.observation_count += contribution_count
                 existing.confidence = max(existing.confidence, conf)
                 if entity_type and not existing.entity_type:
                     existing.entity_type = entity_type
                 self.store.update_entity(existing)
                 entity_ids.append(existing.id)
             else:
-                layer_name = _common_layer(observations, default="default")
                 entity = EntityNode(
                     name=name,
-                    coordinates=centroid,
-                    last_seen=max(timestamps),
-                    first_seen=min(timestamps),
-                    observation_count=len(observations),
+                    coordinates=anchor_coords,
+                    last_seen=anchor_timestamp,
+                    first_seen=(
+                        attributed_obs.timestamp
+                        if attributed_obs is not None
+                        else min(batch_timestamps)
+                    ),
+                    observation_count=contribution_count,
                     confidence=conf,
                     entity_type=entity_type,
-                    layer_name=layer_name,
+                    layer_name=anchor_layer,
                 )
                 self.store.add_entity(entity)
                 entity_ids.append(entity.id)
 
-            # OBSERVED_IN edges
-            for obs in observations:
-                edges.append(
-                    Edge(
-                        source_id=entity_ids[-1],
-                        target_id=obs.id,
-                        edge_type=EdgeType.OBSERVED_IN,
-                    )
-                )
+            per_entity_obs_idx.append(obs_idx if isinstance(obs_idx, int) else None)
 
-        # COOCCURS_WITH edges between all entity pairs
+            # Flush OBSERVED_IN edges for this entity *before* the next
+            # iteration so a subsequent candidate's context-similarity
+            # probe can find the source observation.
+            entity_edges = [
+                Edge(
+                    source_id=entity_ids[-1],
+                    target_id=obs_id,
+                    edge_type=EdgeType.OBSERVED_IN,
+                )
+                for obs_id in linked_obs_ids
+            ]
+            self.store.add_edges(entity_edges)
+
+        # COOCCURS_WITH edges. With per-observation attribution, two
+        # entities co-occur when they were extracted from the same
+        # observation. When either entity lacks attribution we assume cooccurence
+        # in batch.
         for i in range(len(entity_ids)):
             for j in range(i + 1, len(entity_ids)):
+                idx_i = per_entity_obs_idx[i]
+                idx_j = per_entity_obs_idx[j]
+                if idx_i is not None and idx_j is not None:
+                    if idx_i != idx_j:
+                        continue
                 edges.append(
                     Edge(
                         source_id=entity_ids[i],
