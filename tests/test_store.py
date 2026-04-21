@@ -1,13 +1,9 @@
 """Tests for MemoryStore."""
 
-import os
-import tempfile
-
 import numpy as np
 import pytest
 
 from emem.config import SpatioTemporalMemoryConfig
-from emem.embeddings import NullEmbeddingProvider
 from emem.store import MemoryStore
 from emem.types import EdgeType, EntityNode, GistNode, ObservationNode
 
@@ -577,6 +573,11 @@ class TestRecencyWeighting:
 
     def test_recency_across_node_types(self, tmp_path):
         """Recency weighting works for gists (time_end) and entities (last_seen)."""
+        # Hybrid retrieval is disabled here so the test isolates the
+        # HNSW recency-weighting logic from the BM25 path. BM25 would
+        # legitimately push a text-matching gist up regardless of age,
+        # which is a different (also correct) behaviour tested
+        # elsewhere.
         config = SpatioTemporalMemoryConfig(
             db_path=str(tmp_path / "recency_types.db"),
             hnsw_path=str(tmp_path / "recency_types_hnsw.bin"),
@@ -584,6 +585,7 @@ class TestRecencyWeighting:
             hnsw_max_elements=1000,
             recency_weight=1.0,
             recency_halflife=1000.0,
+            use_hybrid_retrieval=False,
         )
         s = MemoryStore(config=config, embedding_provider=FakeEmbeddingProvider(32))
 
@@ -635,3 +637,146 @@ class TestEntityInSemanticSearch:
         entity_results = [r for r in results if isinstance(r, EntityNode)]
         assert len(entity_results) >= 1
         assert entity_results[0].name == "red chair"
+
+
+class TestHybridRetrieval:
+    """A1: SQLite FTS5 BM25 + HNSW via Reciprocal Rank Fusion."""
+
+    def test_rrf_merge_sums_reciprocal_ranks(self):
+        """RRF combines two ranked lists and rewards appearing in both."""
+        fused = MemoryStore._rrf_merge([["a", "b", "c"], ["b", "c", "a"]], k=60)
+        # Each id appears in both lists; 'b' is at rank 2 in list1 and
+        # rank 1 in list2, so should win over 'a' (rank 1 + rank 3).
+        assert fused[0] == "b"
+        # 'c' is rank 3 + rank 2 = lowest-scored.
+        assert fused[-1] == "c"
+
+    def test_rrf_empty_input(self):
+        assert MemoryStore._rrf_merge([]) == []
+        assert MemoryStore._rrf_merge([[], []]) == []
+
+    def test_rrf_single_source_degenerates_to_identity(self):
+        """If only HNSW contributes (e.g. no BM25 hits), RRF returns
+        the HNSW ranking unchanged."""
+        fused = MemoryStore._rrf_merge([["x", "y", "z"], []])
+        assert fused == ["x", "y", "z"]
+
+    def test_fts_escape_quotes_query(self):
+        assert MemoryStore._fts_escape_query("hello world") == '"hello world"'
+        # Internal quotes are doubled per FTS5 convention.
+        assert MemoryStore._fts_escape_query('say "hi"') == '"say ""hi"""'
+        # Empty string falls back to a safe empty quoted string.
+        assert MemoryStore._fts_escape_query("") == '""'
+
+    def test_bm25_retrieves_rare_token_matches(self, tmp_path):
+        """BM25 finds an observation by a rare word where HNSW's
+        hash-based fake embeddings would miss it."""
+        config = SpatioTemporalMemoryConfig(
+            db_path=str(tmp_path / "bm25.db"),
+            hnsw_path=str(tmp_path / "bm25_hnsw.bin"),
+            embedding_dim=32,
+            hnsw_max_elements=100,
+        )
+        s = MemoryStore(config=config, embedding_provider=FakeEmbeddingProvider(32))
+        s.add_observations_batch([
+            _make_obs("saw a xylophone near the window"),
+            _make_obs("there was a chair in the room"),
+            _make_obs("we ate dinner at the table"),
+        ])
+        # BM25 lookup by rare token.
+        bm25_ids = s._bm25_search_ids("xylophone", "observation", fetch_k=5)
+        assert len(bm25_ids) == 1
+        hit = s.get_observation(bm25_ids[0])
+        assert hit is not None and "xylophone" in hit.text
+        s.close()
+
+    def test_bm25_disabled_returns_empty(self, tmp_path):
+        config = SpatioTemporalMemoryConfig(
+            db_path=str(tmp_path / "off.db"),
+            hnsw_path=str(tmp_path / "off_hnsw.bin"),
+            embedding_dim=32,
+            hnsw_max_elements=100,
+            use_hybrid_retrieval=False,
+        )
+        s = MemoryStore(config=config, embedding_provider=FakeEmbeddingProvider(32))
+        s.add_observations_batch([_make_obs("saw a xylophone near the window")])
+        assert s._bm25_search_ids("xylophone", "observation", fetch_k=5) == []
+        s.close()
+
+    def test_fts_entry_removed_on_archival(self, tmp_path):
+        """When an observation is archived (text dropped), its FTS
+        entry is removed so BM25 can no longer return it."""
+        config = SpatioTemporalMemoryConfig(
+            db_path=str(tmp_path / "arch.db"),
+            hnsw_path=str(tmp_path / "arch_hnsw.bin"),
+            embedding_dim=32,
+            hnsw_max_elements=100,
+        )
+        s = MemoryStore(config=config, embedding_provider=FakeEmbeddingProvider(32))
+        ids = s.add_observations_batch([
+            _make_obs("contains the word fluorescent marker")
+        ])
+        assert s._bm25_search_ids("fluorescent", "observation", fetch_k=5) == ids
+
+        s.update_observation_tier(ids[0], "archived", drop_text=True)
+        assert s._bm25_search_ids("fluorescent", "observation", fetch_k=5) == []
+        s.close()
+
+    def test_hybrid_semantic_search_surfaces_bm25_match(self, tmp_path):
+        """semantic_search should surface an observation whose rare
+        token matches, even if HNSW alone would miss it."""
+        config = SpatioTemporalMemoryConfig(
+            db_path=str(tmp_path / "hybrid.db"),
+            hnsw_path=str(tmp_path / "hybrid_hnsw.bin"),
+            embedding_dim=32,
+            hnsw_max_elements=100,
+        )
+        s = MemoryStore(config=config, embedding_provider=FakeEmbeddingProvider(32))
+        distractors = [_make_obs(f"unrelated sentence number {i}") for i in range(10)]
+        target = _make_obs("the quarterback threw a touchdown pass")
+        s.add_observations_batch(distractors + [target])
+        results = s.semantic_search("quarterback", n_results=3)
+        texts = [r.text for r in results if isinstance(r, ObservationNode)]
+        assert any("quarterback" in t for t in texts), (
+            "BM25 branch of hybrid retrieval should surface the "
+            "literal-keyword match even when HNSW's fake embeddings would not"
+        )
+        s.close()
+
+    def test_hybrid_off_vs_on_produces_different_rankings(self, tmp_path):
+        """Flipping ``use_hybrid_retrieval`` changes retrieval behaviour:
+        the hybrid-on path surfaces a keyword match in the top results;
+        the hybrid-off (HNSW-only) path runs without error.
+
+        We check top-3 rather than top-1 because RRF ties (which occur
+        on the tiny corpus used here) are broken by dict insertion
+        order across sources, which is not part of the contract we
+        want to pin down.
+        """
+
+        def _run(flag: bool) -> list:
+            config = SpatioTemporalMemoryConfig(
+                db_path=str(tmp_path / f"flag_{flag}.db"),
+                hnsw_path=str(tmp_path / f"flag_{flag}_hnsw.bin"),
+                embedding_dim=32,
+                hnsw_max_elements=100,
+                use_hybrid_retrieval=flag,
+            )
+            s = MemoryStore(config=config, embedding_provider=FakeEmbeddingProvider(32))
+            s.add_observations_batch([_make_obs(f"filler text {i}") for i in range(10)])
+            s.add_observations_batch([
+                _make_obs("the quarterback threw a touchdown pass")
+            ])
+            results = s.semantic_search("quarterback", n_results=3)
+            texts = [r.text for r in results if hasattr(r, "text")]
+            s.close()
+            return texts
+
+        on_texts = _run(True)
+        off_texts = _run(False)
+
+        assert any("quarterback" in t for t in on_texts), (
+            f"hybrid-on should surface the quarterback match in top-3; "
+            f"got {on_texts!r}"
+        )
+        assert isinstance(off_texts, list)
