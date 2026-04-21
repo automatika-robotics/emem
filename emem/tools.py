@@ -22,27 +22,13 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "semantic_search": {
         "name": "semantic_search",
         "description": (
-            "Search stored observations by meaning using semantic similarity. "
-            "Returns whatever recent raw observations and older consolidated "
-            "summaries happen to be closest to the query — results are ranked "
-            "by similarity, not by truth, so a result being returned does NOT "
-            "by itself mean it answers the question. "
-            "How to read the results: if the search returns observations that "
-            "are relevant to the question — mentioning the entities, events, "
-            "or topics being asked about — then reason from them to produce "
-            "an answer, even when no single observation states the answer "
-            "verbatim. Combining, paraphrasing, and inferring across multiple "
-            "retrieved observations is expected and encouraged. "
-            "However, if the search returns nothing relevant — no observation "
-            "mentions the subject of the question at all — then the correct "
-            "answer is that the information is not available. In that case, "
-            "do not fabricate entities, events, or details that were not "
-            "retrieved. "
-            "Optionally narrow the search by time window (time_after / "
-            "time_before), perception layer, or episode. The spatial filter "
-            "parameters (near_x / near_y / spatial_radius) only help when "
-            "observations were stored with real world coordinates — for "
-            "text-only or conversational memory, leave them unset."
+            "Use when the question asks WHAT a topic is about and no more "
+            "specific tool fits. General meaning-based retrieval over "
+            "observations and summaries. Do NOT use for time-focused "
+            "questions (use temporal_query), for a named entity's attributes "
+            "(use entity_query), for long-ago events (use search_gists), "
+            "or for 'where is X' (use locate). Prefer a single targeted "
+            "query over chaining multiple searches."
         ),
         "parameters": {
             "type": "object",
@@ -115,13 +101,11 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "spatial_query": {
         "name": "spatial_query",
         "description": (
-            "List observations stored within a radius of a point in the "
-            "world, with no semantic filter. Use this to dump everything "
-            "seen near a known location. For semantically filtered results "
-            "near a point, use semantic_search with near_x/near_y instead. "
-            "\n\n"
-            "Only meaningful when the memory was populated by an embodied "
-            "agent like a robot with real world coordinates."
+            "Use when the question asks WHAT IS NEAR a specific "
+            "coordinate. Returns all observations within a radius of "
+            "(x, y, z), with no semantic filter. Only useful when "
+            "observations carry real world coordinates — skip for "
+            "text-only or conversational memory."
         ),
         "parameters": {
             "type": "object",
@@ -171,18 +155,14 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "temporal_query": {
         "name": "temporal_query",
         "description": (
-            "List observations in a time range, ordered chronologically. "
-            "Use this for questions like 'what happened between X and Y' or "
-            "'show me the last N minutes'. If raw observations in that "
-            "window have been archived, the tool falls back to consolidated "
-            "summaries automatically. "
-            "\n\n"
-            "Time arguments (time_after / time_before) accept a wide range "
-            "of forms, case-insensitive: '-10m', '10m', '10 minutes', "
-            "'last 10 minutes', '2 hours ago', 'yesterday', 'last week', "
-            "or a numeric Unix timestamp. If you know only the duration, "
-            "use last_n_minutes instead. The near_x / near_y spatial "
-            "filters only help when observations have real world coordinates."
+            "Use when the question asks WHEN something happened or requests "
+            "events in a specific time window or date range — including "
+            "'when did X', 'what happened on <date>', 'last <duration>', "
+            "'between X and Y', 'yesterday', 'last week'. Returns "
+            "observations ordered chronologically. Prefer this over "
+            "semantic_search whenever the question is time-focused. Time "
+            "arguments accept relative ('-10m', '2 hours ago', 'yesterday') "
+            "or numeric Unix timestamps."
         ),
         "parameters": {
             "type": "object",
@@ -239,12 +219,11 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "episode_summary": {
         "name": "episode_summary",
         "description": (
-            "Fetch the consolidated summary of one or more episodes. An "
-            "episode is a named bracket of observations created with "
-            "start_episode/end_episode (e.g. 'kitchen patrol'). Use this "
-            "when the user asks about a past task by name, or about "
-            "'the last episode'. Provide at least one of episode_id, "
-            "task_name, or last_n."
+            "Use when the question names a past episode, task, or session "
+            "— e.g. 'the kitchen patrol', 'the last session', 'session 3', "
+            "'yesterday's task'. Returns the consolidated summary of those "
+            "episodes. Provide at least one of episode_id, task_name, or "
+            "last_n."
         ),
         "parameters": {
             "type": "object",
@@ -277,15 +256,12 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "get_current_context": {
         "name": "get_current_context",
         "description": (
-            "Summarize the robot's immediate situational awareness: what is "
-            "physically nearby the robot's current position, plus what has "
-            "been observed in the last few minutes. Returns nearby "
-            "entities, nearby area summaries, recent observations across "
-            "all layers, and current body status if available. "
-            "\n\n"
-            "Use this at the start of a conversation or task to ground the "
-            "robot in its current environment. Only useful when the robot "
-            "has a live odometry position callback."
+            "Use when the question asks about NOW — what the robot sees "
+            "right now, what is around it, or what is going on at the "
+            "current moment. Returns nearby entities, area summaries, "
+            "recent observations, and current body status. Requires the "
+            "robot to have a live position — not useful for text-only or "
+            "past-focused questions."
         ),
         "parameters": {
             "type": "object",
@@ -306,13 +282,12 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "search_gists": {
         "name": "search_gists",
         "description": (
-            "Search long-term memory (consolidated summaries only). A 'gist' "
-            "is an LLM-generated summary of a cluster of related "
-            "observations; these persist after raw observations are "
-            "archived. Use this for long-horizon recall (older than "
-            "consolidation window) or when you explicitly want high-level "
-            "summaries. For typical queries, prefer semantic_search, which "
-            "already includes gists."
+            "Use when the question is about EVENTS FROM LONG AGO (older "
+            "than the recent observation horizon) or explicitly asks for "
+            "a high-level summary rather than specific events. Searches "
+            "consolidated summaries only. Try semantic_search first; "
+            "fall back to this only when semantic_search returns nothing "
+            "and the question is long-horizon."
         ),
         "parameters": {
             "type": "object",
@@ -344,19 +319,13 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "entity_query": {
         "name": "entity_query",
         "description": (
-            "Look up persistent entities (objects, people, landmarks) that "
-            "the memory has tracked across observations. Entities are "
-            "automatically extracted and deduplicated across time. Use "
-            "this when the user refers to something by identity rather "
-            "than description (e.g. 'the red chair', 'Maria', "
-            "'charging station #2'). Returns each entity's name, type, "
-            "last-known coordinates, and how many times it has been "
-            "observed. "
-            "\n\n"
-            "Note: entities are extracted during consolidation, so they "
-            "only appear once an episode has been ended or a consolidation "
-            "window has elapsed. If a recently seen object is not found, "
-            "fall back to semantic_search."
+            "Use when the question names a SPECIFIC persistent entity "
+            "(object, person, landmark) and asks about that entity's "
+            "attributes, count, or last-known location — e.g. 'how often "
+            "did I see Maria', 'is wall a common object', 'where was the "
+            "red chair last seen'. Returns entity records with name, "
+            "type, coordinates, and observation count. Fall back to "
+            "semantic_search if the entity is not found."
         ),
         "parameters": {
             "type": "object",
@@ -405,17 +374,11 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "locate": {
         "name": "locate",
         "description": (
-            "Resolve a concept (e.g. 'the kitchen', 'charging station', "
-            "'the red chair') to its spatial coordinates in the world. "
-            "Returns a centroid (x, y, z) and a spread radius describing "
-            "where observations of that concept cluster. "
-            "\n\n"
-            "Use this when you need a target location for navigation or "
-            "path planning. Do NOT use it for general fact retrieval, "
-            "conversational-text memory, or any query where the answer "
-            "is not a set of coordinates — the centroid is only "
-            "meaningful when observations were stored with real "
-            "world-frame positions in a robot's memory."
+            "Use when the question asks WHERE a concept is — e.g. 'where "
+            "is the kitchen', 'find the charging station'. Returns a "
+            "centroid (x, y, z) and a spread radius. Only useful when "
+            "observations were stored with real world-frame coordinates; "
+            "skip for text-only or conversational memory."
         ),
         "parameters": {
             "type": "object",
@@ -451,21 +414,13 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "recall": {
         "name": "recall",
         "description": (
-            "Spatially grounded cross-modal lookup about a physical place, "
-            "object, or entity. The tool first runs semantic_search to "
-            "locate where the concept clusters in the world, then pulls "
-            "every observation, consolidated summary, and tracked entity "
-            "from that area — giving you a rich multi-layer picture of "
-            "what the robot knows about it. "
-            "\n\n"
-            "IMPORTANT — only use this tool when all of the following hold: "
-            "(a) the memory was populated by a robot with real "
-            "world coordinates (odometry)."
-            "(b) the concept you are asking about is a physical thing with "
-            "a consistent location (e.g. 'the kitchen', 'charging station', "
-            "'Maria's desk') — not a conversation topic, a time window, or "
-            "an abstract fact. "
-            "Otherwise, use semantic_search."
+            "Use when the question asks 'tell me about X' or 'describe "
+            "X' where X is a physical PLACE or entity with a consistent "
+            "real-world location (e.g. 'describe the kitchen', "
+            "'everything about Maria's desk'). Returns a cross-layer "
+            "bundle: observations + gists + entities around that "
+            "location. Only useful for robots with real coordinates; "
+            "skip for text-only memory and abstract topics."
         ),
         "parameters": {
             "type": "object",
@@ -495,11 +450,11 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "body_status": {
         "name": "body_status",
         "description": (
-            "Read the most recent body/internal state measurements "
-            "(battery %, CPU temp, joint health, etc.). Use this for "
-            "questions about the robot's own condition, not the external "
-            "environment. Returns the latest reading from each matching "
-            "body-state layer."
+            "Use when the question is about the robot's OWN INTERNAL "
+            "STATE — battery level, CPU temperature, joint health, or "
+            "other body/interoception readings. Do NOT use for anything "
+            "about the external environment. Returns the latest "
+            "reading from each matching body-state layer."
         ),
         "parameters": {
             "type": "object",
