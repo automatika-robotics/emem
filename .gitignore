@@ -39,3 +39,13 @@ Thumbs.db
 
 # Technical report (not tracked)
 TECHNICAL_REPORT.md
+
+# preprint sources (not tracked)
+paper/
+
+# Benchmark run artifacts (not tracked)
+runs/
+nohup.out
+
+# Default HNSW path uses
+memory_hnsw.bin
