@@ -31,17 +31,13 @@ def _make_loader(dataset: str, data_dir: str) -> Any:
         from harness.benchmarks.academic.loaders.locomo import LoCoMoLoader
 
         return LoCoMoLoader(data_dir)
-    if dataset == "emem-bench":
-        from harness.benchmarks.academic.loaders.emem_bench import EMEMBenchLoader
-
-        return EMEMBenchLoader(data_dir)
     raise ValueError(f"Unknown dataset: {dataset!r}")
 
 
 def _make_scorer(dataset: str, **kwargs: Any) -> Any:
     """Create the appropriate scorer for the given dataset.
 
-    :param dataset: One of ``"sqa3d"``, ``"locomo"``, ``"emem-bench"``.
+    :param dataset: One of ``"sqa3d"``, ``"locomo"``.
     :returns: Scorer instance.
     """
     if dataset == "sqa3d":
@@ -52,15 +48,6 @@ def _make_scorer(dataset: str, **kwargs: Any) -> Any:
         from harness.benchmarks.academic.scorers.f1 import F1Scorer
 
         return F1Scorer()
-    if dataset == "emem-bench":
-        from harness.benchmarks.academic.scorers.emem_bench import EMEMBenchScorer
-
-        judge_client = kwargs.get("judge_client") or kwargs.get("llm_client")
-        provider = kwargs.get("judge_provider") or kwargs.get("provider", "ollama")
-        llm_chat = (
-            judge_client._generate if provider == "gemini" else judge_client._chat
-        )
-        return EMEMBenchScorer(llm_chat=llm_chat)
     raise ValueError(f"Unknown dataset: {dataset!r}")
 
 
@@ -257,13 +244,6 @@ _QUESTION_TEMPLATES: Dict[str, str] = {
         "Give a short answer — a single word or brief phrase.\n\n"
         "Question: {question}"
     ),
-    "emem-bench": (
-        "You are an embodied agent with a spatio-temporal memory of your exploration.\n"
-        "Use your memory tools to answer the following question.\n"
-        "Give a concise answer — a short phrase or sentence.\n"
-        "Use spatial coordinates when relevant.\n\n"
-        "Question: {question}"
-    ),
 }
 
 _SYSTEM_PREAMBLES: Dict[str, str] = {
@@ -289,16 +269,6 @@ _SYSTEM_PREAMBLES: Dict[str, str] = {
         "a memory system that stores objects and their 3D positions in a scene. "
         "Use the tools to find objects and answer spatial questions. Give short "
         "answers — a single word or brief phrase. "
-        "You have access to the following tools:"
-    ),
-    "emem-bench": (
-        "You are an embodied robot assistant with a spatio-temporal memory system. "
-        "You have explored an environment and stored observations across multiple "
-        "perception layers (visual descriptions, object detections, place labels) "
-        "as well as body state (battery, temperature). "
-        "Use the available tools to search your memory and answer questions about "
-        "what you observed, where things are, and your body state. "
-        "Give concise answers. Use spatial coordinates when they help. "
         "You have access to the following tools:"
     ),
 }
@@ -360,9 +330,7 @@ def main(argv: Optional[List[str]] = None) -> None:  # noqa: C901  # TODO: split
     parser = argparse.ArgumentParser(
         description="Academic benchmark evaluation for eMEM"
     )
-    parser.add_argument(
-        "--dataset", required=True, choices=["sqa3d", "locomo", "emem-bench"]
-    )
+    parser.add_argument("--dataset", required=True, choices=["sqa3d", "locomo"])
     parser.add_argument("--data-dir", required=True, help="Path to dataset directory")
     parser.add_argument(
         "--ablation", default="full", help="Comma-separated ablation names"
@@ -493,7 +461,11 @@ def main(argv: Optional[List[str]] = None) -> None:  # noqa: C901  # TODO: split
             seed=run_seed,
         )
         judge_model = args.judge_model or args.llm_model
-        if args.dataset == "emem-bench" and judge_model != args.llm_model:
+        if judge_model != args.llm_model:
+            # Spin up a second client only when the judge model differs
+            # from the agent model. Consumed by LLM-judge scorers (none
+            # active in the current dataset set; wired back in when
+            # eMEM-Bench v1's scorer lands in A14a).
             _, judge_llm, _ = _make_providers(
                 args.provider,
                 args.embed_model,

@@ -30,8 +30,8 @@ DATASET_TOOL_FILTERS: Dict[str, List[str]] = {
         "episode_summary",
         "get_current_context",
     ],
-    # eMEM-Bench exercises all 10 tools, so no filter.
-    "emem-bench": list(ALL_TOOLS),
+    # eMEM-Bench v1 exercises all 10 tools, so no filter.
+    "emem-bench-v1": list(ALL_TOOLS),
     # SQA3D is a single-frame spatial QA, not a memory benchmark, but
     # included for completeness.
     "sqa3d": list(ALL_TOOLS),

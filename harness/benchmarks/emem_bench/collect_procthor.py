@@ -32,16 +32,14 @@ import time
 from typing import Any, Dict, List, Optional
 
 from harness.benchmarks.academic.caption_cache import CaptionCache
-from harness.benchmarks.emem_bench.collect_ai2thor import (
+from harness.benchmarks.emem_bench.collection_utils import (
     LAYER_PROMPTS,
-    _generate_interoception,
-    _get_scene_objects,
-    _make_vlm,
-    _save_frame,
-)
-from harness.benchmarks.emem_bench.generate_questions import (
-    _is_valid_caption,
-    _is_valid_place,
+    extract_scene_objects,
+    generate_synthetic_interoception,
+    is_valid_caption,
+    is_valid_place,
+    make_ollama_vlm,
+    save_frame_jpeg,
 )
 from harness.environments.ai2thor_adapter import AI2ThorAdapter
 from harness.environments.procthor_utils import (
@@ -113,7 +111,7 @@ def collect_house(
 
     try:
         frame, pos = env.reset()
-        scene_objects = _get_scene_objects(env._controller)
+        scene_objects = extract_scene_objects(env._controller)
 
         trajectory: List[Dict[str, Any]] = []
         timestamps: List[float] = []
@@ -130,7 +128,7 @@ def collect_house(
             if save_frames:
                 image_path = f"frames/{frame_id}.jpg"
                 full_path = os.path.join(output_dir, image_path)
-                _save_frame(frame, full_path)
+                save_frame_jpeg(frame, full_path)
 
             layers: Dict[str, str] = {}
             for layer_name, prompt in LAYER_PROMPTS.items():
@@ -142,9 +140,9 @@ def collect_house(
                     caption = vlm.describe(frame, prompt)
                     cache.put(cache_key, prompt, vlm_model, caption)
 
-                if layer_name == "place" and not _is_valid_place(caption):
+                if layer_name == "place" and not is_valid_place(caption):
                     caption = ""
-                elif layer_name in ("vlm", "detections") and not _is_valid_caption(
+                elif layer_name in ("vlm", "detections") and not is_valid_caption(
                     caption
                 ):
                     caption = ""
@@ -171,7 +169,7 @@ def collect_house(
 
             frame, pos, _, done, _ = env.step(0)
 
-        interoception = _generate_interoception(timestamps)
+        interoception = generate_synthetic_interoception(timestamps)
 
         sample: Dict[str, Any] = {
             "sample_id": sample_id,
@@ -285,7 +283,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     os.makedirs(args.output, exist_ok=True)
     cache_path = os.path.join(args.output, "caption_cache.jsonl")
     cache = CaptionCache(cache_path)
-    vlm = _make_vlm(args.vlm_model, args.ollama_url)
+    vlm = make_ollama_vlm(args.vlm_model, args.ollama_url)
 
     log.info("Loading ProcTHOR-10K (%s split)", args.split)
     dataset = _load_procthor(revision=args.dataset_revision)
