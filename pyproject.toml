@@ -67,6 +67,10 @@ dev = [
 embeddings = [
     "sentence-transformers>=2.2",
 ]
+benchmarks = [
+    # ProcTHOR-10K scene dataset loader (AllenAI).
+    "prior>=1.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["emem*"]

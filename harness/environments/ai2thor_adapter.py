@@ -51,9 +51,12 @@ class AI2ThorAdapter:
     """Wraps an AI2-THOR scene to produce RGB frames and agent coordinates.
 
     Uses floor-plane ``(x, z)`` from AI2-THOR as ``(x, y)`` to match the
-    2D convention used by MiniGridAdapter and eMEM.
+    2D convention used by MiniGridAdapter and eMEM. Accepts either a
+    FloorPlan string (e.g. ``"FloorPlan1"``) or a ProcTHOR house dict
+    (as returned by ``prior.load_dataset('procthor-10k')``); both
+    forms are accepted by the underlying AI2-THOR controller.
 
-    :param scene: AI2-THOR scene name (e.g. ``"FloorPlan1"``).
+    :param scene: AI2-THOR scene name or ProcTHOR house dict.
     :param grid_size: Navigation grid spacing in metres.
     :param width: Frame width in pixels.
     :param height: Frame height in pixels.
@@ -77,7 +80,7 @@ class AI2ThorAdapter:
 
     def __init__(
         self,
-        scene: str = "FloorPlan1",
+        scene: str | dict = "FloorPlan1",
         grid_size: float = 0.25,
         width: int = 300,
         height: int = 300,
