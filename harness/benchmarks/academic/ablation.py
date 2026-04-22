@@ -109,12 +109,22 @@ ABLATIONS: Dict[str, AblationConfig] = {
             "get_current_context",
         ],
     ),
-    # A1 contribution A/B: same pipeline with hybrid retrieval
-    # (BM25 + HNSW) turned off, so the retrieval path falls back to
-    # HNSW-only. Comparing ``full`` vs ``no_hybrid`` isolates the
-    # BM25 contribution.
+    # Same pipeline with hybrid retrieval (BM25 + HNSW) turned off,
+    # so the retrieval path falls back to HNSW-only. Comparing
+    # ``full`` vs ``no_hybrid`` isolates the BM25 contribution.
     "no_hybrid": AblationConfig(
         "no_hybrid",
         mem_config_overrides={"use_hybrid_retrieval": False},
+    ),
+    # Same pipeline with the entity-merge context-similarity gate
+    # disabled: two observations with the same entity name and within
+    # spatial radius collapse into a single entity regardless of how
+    # different their surrounding text is. Comparing ``full`` vs
+    # ``no_context_merge`` isolates the contribution of context-aware
+    # merging on any benchmark that touches entity_query /
+    # semantic_search.
+    "no_context_merge": AblationConfig(
+        "no_context_merge",
+        mem_config_overrides={"entity_text_similarity_threshold": 0.0},
     ),
 }

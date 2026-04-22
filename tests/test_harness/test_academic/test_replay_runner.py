@@ -194,12 +194,17 @@ class TestAblationConfigs:
             "flat_rag",
             "gen_agents_stream",
             "no_hybrid",
+            "no_context_merge",
         }
         assert set(ABLATIONS.keys()) == expected
 
     def test_no_hybrid_overrides_memory_config(self):
         abl = ABLATIONS["no_hybrid"]
         assert abl.mem_config_overrides == {"use_hybrid_retrieval": False}
+
+    def test_no_context_merge_overrides_memory_config(self):
+        abl = ABLATIONS["no_context_merge"]
+        assert abl.mem_config_overrides == {"entity_text_similarity_threshold": 0.0}
 
     def test_vector_only_has_one_tool(self):
         abl = ABLATIONS["vector_only"]
