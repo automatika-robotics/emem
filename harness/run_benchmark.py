@@ -7,8 +7,9 @@ import math
 import random
 import statistics
 import sys
+import tempfile
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
@@ -19,9 +20,9 @@ from harness.benchmarks.academic.replay_runner import BenchmarkReport, Benchmark
 def _make_loader(dataset: str, data_dir: str) -> Any:
     """Create the appropriate dataset loader.
 
-    :param dataset: One of ``"sqa3d"``, ``"locomo"``.
+    :param dataset: One of ``"sqa3d"``, ``"locomo"``, ``"emem-bench-v1"``.
     :param data_dir: Path to the dataset directory.
-    :returns: Loader instance.
+    :returns: Loader instance with a ``.load()`` iterator.
     """
     if dataset == "sqa3d":
         from harness.benchmarks.academic.loaders.sqa3d import SQA3DLoader
@@ -31,13 +32,19 @@ def _make_loader(dataset: str, data_dir: str) -> Any:
         from harness.benchmarks.academic.loaders.locomo import LoCoMoLoader
 
         return LoCoMoLoader(data_dir)
+    if dataset == "emem-bench-v1":
+        from harness.benchmarks.academic.emem_bench_v1.loader import (
+            SceneManifestLoader,
+        )
+
+        return SceneManifestLoader(data_dir)
     raise ValueError(f"Unknown dataset: {dataset!r}")
 
 
 def _make_scorer(dataset: str, **kwargs: Any) -> Any:
     """Create the appropriate scorer for the given dataset.
 
-    :param dataset: One of ``"sqa3d"``, ``"locomo"``.
+    :param dataset: One of ``"sqa3d"``, ``"locomo"``, ``"emem-bench-v1"``.
     :returns: Scorer instance.
     """
     if dataset == "sqa3d":
@@ -48,6 +55,18 @@ def _make_scorer(dataset: str, **kwargs: Any) -> Any:
         from harness.benchmarks.academic.scorers.f1 import F1Scorer
 
         return F1Scorer()
+    if dataset == "emem-bench-v1":
+        # LLM-judge scoring. Paradigm generators (A14b/c) can swap in
+        # a per-paradigm scorer later; for now we reuse the generic
+        # EMEMBenchScorer that the v0 scorer module still exposes.
+        from harness.benchmarks.academic.scorers.emem_bench import EMEMBenchScorer
+
+        judge_client = kwargs.get("judge_client") or kwargs.get("llm_client")
+        provider = kwargs.get("judge_provider") or kwargs.get("provider", "ollama")
+        llm_chat = (
+            judge_client._generate if provider == "gemini" else judge_client._chat
+        )
+        return EMEMBenchScorer(llm_chat=llm_chat)
     raise ValueError(f"Unknown dataset: {dataset!r}")
 
 
@@ -167,6 +186,95 @@ def _print_aggregate(ablation: str, reports: List[BenchmarkReport]) -> None:
     for cat, info in agg["per_category"].items():
         print(f"  {cat:<12} {info['mean']:>8.2f} {info['stderr']:>8.2f}")
     print()
+
+
+def _v1_memory_factory(
+    embedder: Any,
+    llm: Any,
+    ablation: Any,
+    extra_overrides: Dict[str, Any],
+) -> Callable[[Callable[[], float]], Any]:
+    """Return a closure that builds a fresh SpatioTemporalMemory per call.
+
+    The emem-bench-v1 :class:`ScheduleRunner` needs one memory per
+    schedule and wants to drive the memory's clock externally (so
+    ``consolidate_time_window`` / ``maintenance`` fire at the
+    schedule's virtual time, not wall time). The returned factory
+    accepts a ``time_getter`` and threads it into ``SpatioTemporalMemory``
+    via the ``get_current_time`` hook.
+    """
+    from pathlib import Path
+
+    from emem import SpatioTemporalMemory
+    from emem.config import SpatioTemporalMemoryConfig
+
+    def factory(time_getter: Callable[[], float]) -> Any:
+        db_path = tempfile.mktemp(suffix=".db")
+        cfg_kwargs: Dict[str, Any] = {
+            "db_path": db_path,
+            "hnsw_path": str(Path(db_path).with_suffix(".hnsw.bin")),
+        }
+        cfg_kwargs.update(ablation.mem_config_overrides)
+        cfg_kwargs.update(extra_overrides)
+        return SpatioTemporalMemory(
+            db_path=db_path,
+            config=SpatioTemporalMemoryConfig(**cfg_kwargs),
+            embedding_provider=embedder,
+            llm_client=llm,
+            get_current_time=time_getter,
+        )
+
+    return factory
+
+
+def _build_runner(
+    *,
+    dataset: str,
+    loader: Any,
+    scorer: Any,
+    ablation: Any,
+    embedder: Any,
+    llm: Any,
+    agent_factory: Callable[[Any], Any],
+    max_samples: Optional[int],
+    max_questions_per_sample: Optional[int],
+    mem_config_overrides: Dict[str, Any],
+) -> Any:
+    """Pick the right runner class for the dataset and wire it up.
+
+    LoCoMo / SQA3D keep using :class:`BenchmarkRunner`; eMEM-Bench v1
+    routes to :class:`ScheduleRunner`, which iterates schedule phases
+    instead of a flat ingest-then-query pass.
+    """
+    if dataset == "emem-bench-v1":
+        from harness.benchmarks.academic.emem_bench_v1.runner import ScheduleRunner
+
+        return ScheduleRunner(
+            schedules=loader.load(),
+            scorer=scorer,
+            ablation=ablation,
+            memory_factory=_v1_memory_factory(
+                embedder, llm, ablation, mem_config_overrides
+            ),
+            agent_factory=agent_factory,
+            dataset_tool_filter=_dataset_tool_filter(dataset),
+            max_samples=max_samples,
+            dataset_name=dataset,
+        )
+
+    return BenchmarkRunner(
+        loader=loader,
+        scorer=scorer,
+        ablation=ablation,
+        embedding_provider=embedder,
+        llm_client=llm,
+        agent_factory=agent_factory,
+        max_samples=max_samples,
+        max_questions_per_sample=max_questions_per_sample,
+        dataset_tool_filter=_dataset_tool_filter(dataset),
+        question_template=_QUESTION_TEMPLATES.get(dataset),
+        mem_config_overrides=mem_config_overrides,
+    )
 
 
 def _make_agent_factory(
@@ -330,7 +438,11 @@ def main(argv: Optional[List[str]] = None) -> None:  # noqa: C901  # TODO: split
     parser = argparse.ArgumentParser(
         description="Academic benchmark evaluation for eMEM"
     )
-    parser.add_argument("--dataset", required=True, choices=["sqa3d", "locomo"])
+    parser.add_argument(
+        "--dataset",
+        required=True,
+        choices=["sqa3d", "locomo", "emem-bench-v1"],
+    )
     parser.add_argument("--data-dir", required=True, help="Path to dataset directory")
     parser.add_argument(
         "--ablation", default="full", help="Comma-separated ablation names"
@@ -507,17 +619,16 @@ def main(argv: Optional[List[str]] = None) -> None:  # noqa: C901  # TODO: split
             ablation = ABLATIONS[abl_name]
             loader = _make_loader(args.dataset, args.data_dir)
 
-            runner = BenchmarkRunner(
+            runner = _build_runner(
+                dataset=args.dataset,
                 loader=loader,
                 scorer=scorer,
                 ablation=ablation,
-                embedding_provider=embedder,
-                llm_client=llm,
+                embedder=embedder,
+                llm=llm,
                 agent_factory=agent_factory,
                 max_samples=args.max_samples,
                 max_questions_per_sample=args.max_questions_per_sample,
-                dataset_tool_filter=_dataset_tool_filter(args.dataset),
-                question_template=_QUESTION_TEMPLATES.get(args.dataset),
                 mem_config_overrides=mem_config_overrides,
             )
 
