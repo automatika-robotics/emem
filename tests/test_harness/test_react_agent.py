@@ -136,3 +136,223 @@ class TestReactAgentIntegration:
 
             assert result.answer
             assert len(result.steps) > 0
+
+
+class _FakeMem:
+    """Minimal memory stub for unit-testing the tool-call loop."""
+
+    def __init__(self, tool_defs, responses):
+        self._tool_defs = tool_defs
+        self._responses = dict(responses)
+        self.calls = []
+
+    def get_tool_definitions(self):
+        return self._tool_defs
+
+    def dispatch_tool_call(self, name, args):
+        self.calls.append((name, args))
+        return self._responses.get(name, f"(no response for {name})")
+
+
+class TestNativeToolCallAgent:
+    """A8: Ollama native tool-calling agent."""
+
+    _TOOLS = [
+        {
+            "type": "function",
+            "function": {
+                "name": "semantic_search",
+                "description": "search memory semantically",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "temporal_query",
+                "description": "search by time",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"t_start": {"type": "number"}},
+                    "required": ["t_start"],
+                },
+            },
+        },
+    ]
+
+    def _make_agent(self, monkeypatch, scripted_responses, mem_responses=None):
+        """Install a monkeypatch on ``post_json`` that returns scripted
+        assistant messages in order, and return the constructed agent."""
+        from harness.agent import react_agent as react_mod
+
+        mem = _FakeMem(self._TOOLS, mem_responses or {})
+
+        captured_bodies = []
+        calls = iter(scripted_responses)
+
+        def fake_post_json(url, body, **_kwargs):
+            captured_bodies.append(body)
+            return {"message": next(calls)}
+
+        monkeypatch.setattr(react_mod, "post_json", fake_post_json)
+
+        agent = react_mod.NativeToolCallAgent(
+            mem,
+            model="test-model",
+            base_url="http://localhost:11434",
+            max_steps=4,
+            seed=0,
+        )
+        return agent, mem, captured_bodies
+
+    def test_dispatches_tool_calls(self, monkeypatch):
+        scripted = [
+            {
+                "role": "assistant",
+                "content": "checking memory",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "semantic_search",
+                            "arguments": {"query": "battery"},
+                        }
+                    }
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": "The battery is at 85%.",
+                "tool_calls": [],
+            },
+        ]
+        agent, mem, _ = self._make_agent(
+            monkeypatch, scripted, mem_responses={"semantic_search": "battery: 85%"}
+        )
+        result = agent.run("What's my battery level?")
+
+        assert result.answer == "The battery is at 85%."
+        assert result.tools_used == ["semantic_search"]
+        assert mem.calls == [("semantic_search", {"query": "battery"})]
+
+    def test_sends_tools_field_in_body(self, monkeypatch):
+        scripted = [{"role": "assistant", "content": "done", "tool_calls": []}]
+        agent, _mem, bodies = self._make_agent(monkeypatch, scripted)
+        agent.run("hello")
+        assert bodies, "no HTTP body captured"
+        assert "tools" in bodies[0]
+        assert bodies[0]["tools"] == self._TOOLS
+
+    def test_seed_threaded_into_options(self, monkeypatch):
+        scripted = [{"role": "assistant", "content": "done", "tool_calls": []}]
+        agent, _mem, bodies = self._make_agent(monkeypatch, scripted)
+        agent.run("hi")
+        assert bodies[0].get("options", {}).get("seed") == 0
+
+    def test_no_tool_calls_returns_content_directly(self, monkeypatch):
+        scripted = [
+            {
+                "role": "assistant",
+                "content": "I don't need to search; it's blue.",
+                "tool_calls": [],
+            }
+        ]
+        agent, mem, _ = self._make_agent(monkeypatch, scripted)
+        result = agent.run("What colour is the sky?")
+        assert result.answer == "I don't need to search; it's blue."
+        assert result.tools_used == []
+        assert mem.calls == []
+
+    def test_multi_step_tool_chain(self, monkeypatch):
+        scripted = [
+            {
+                "role": "assistant",
+                "content": "looking up",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "semantic_search",
+                            "arguments": {"query": "robot"},
+                        }
+                    }
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": "now time window",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "temporal_query",
+                            "arguments": {"t_start": 0.0},
+                        }
+                    }
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": "final: ok",
+                "tool_calls": [],
+            },
+        ]
+        agent, _, _ = self._make_agent(monkeypatch, scripted)
+        result = agent.run("two-step question")
+        assert result.tools_used == ["semantic_search", "temporal_query"]
+        assert result.answer == "final: ok"
+
+    def test_max_steps_cuts_off_runaway_tool_calls(self, monkeypatch):
+        runaway = {
+            "role": "assistant",
+            "content": "still searching",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "semantic_search",
+                        "arguments": {"query": "x"},
+                    }
+                }
+            ],
+        }
+        scripted = [runaway] * 20  # more than max_steps
+        agent, _mem, _ = self._make_agent(monkeypatch, scripted)
+        result = agent.run("loop forever")
+        assert "Reached max steps" in result.answer
+        assert len(result.tools_used) == 4  # max_steps=4
+
+    def test_arguments_as_json_string_is_coerced(self, monkeypatch):
+        scripted = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "semantic_search",
+                            # Ollama normally returns a dict but an older
+                            # build can hand back the JSON as a string.
+                            "arguments": '{"query": "chair"}',
+                        }
+                    }
+                ],
+            },
+            {"role": "assistant", "content": "done", "tool_calls": []},
+        ]
+        agent, mem, _ = self._make_agent(monkeypatch, scripted)
+        agent.run("string-args")
+        assert mem.calls == [("semantic_search", {"query": "chair"})]
+
+    def test_think_tag_is_stripped(self, monkeypatch):
+        scripted = [
+            {
+                "role": "assistant",
+                "content": "<think>lots of reasoning</think>final",
+                "tool_calls": [],
+            }
+        ]
+        agent, _mem, _ = self._make_agent(monkeypatch, scripted)
+        result = agent.run("thinking")
+        assert "think" not in result.answer.lower()
+        assert "final" in result.answer

@@ -18,10 +18,12 @@ class OllamaLLMClient:
         self,
         model: str = "qwen3.5:latest",
         base_url: str = "http://localhost:11434",
+        seed: int | None = None,
     ):
         self._model = model
         self._url = f"{base_url.rstrip('/')}/api/chat"
         self._thinks = _is_thinking_model(model)
+        self._seed = seed
 
     def summarize(self, texts: list[str]) -> str:
         numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
@@ -43,10 +45,13 @@ class OllamaLLMClient:
     def extract_entities(self, texts: list[str]) -> list[dict[str, Any]]:
         numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
         raw = self._chat(
-            "Extract named entities (objects, places, people) from these observations. "
-            "Return ONLY a JSON array where each element has keys: "
-            '"name" (string), "entity_type" (string or null), "confidence" (float 0-1).\n\n'
-            + numbered
+            "Extract named entities (objects, places, people) from these "
+            "observations. Return ONLY a JSON array where each element has "
+            'keys: "name" (string), "entity_type" (string or null), '
+            '"confidence" (float 0-1), "observation_index" (integer, '
+            "1-based, indicating which numbered observation below this "
+            "entity came from). If the same entity appears in multiple "
+            "observations, emit one record per observation.\n\n" + numbered
         )
         return _parse_entities(raw)
 
@@ -61,9 +66,14 @@ class OllamaLLMClient:
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
         }
+        options: dict = {}
         if max_tokens is not None:
-            body["options"] = {"num_predict": max_tokens}
+            options["num_predict"] = max_tokens
+        if self._seed is not None:
+            options["seed"] = self._seed
+        if options:
+            body["options"] = options
         if self._thinks:
             body["think"] = think if think is not None else False
-        data = post_json(self._url, body, timeout=300)
+        data = post_json(self._url, body, timeout=900)
         return strip_think_tags(data["message"]["content"])
