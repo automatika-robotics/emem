@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -9,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from harness.benchmarks.academic.ablation import AblationConfig
 from harness.benchmarks.academic.trajectory import BenchmarkQuestion, BenchmarkSample
+from harness.postprocess import clean_answer
 
 log = logging.getLogger("harness.academic")
 
@@ -135,69 +135,38 @@ class BenchmarkReport:
         }
 
 
-_UNANSWERABLE_RE = re.compile(
-    r"^("
-    r"unanswerable"
-    r"|(?:no |not )?"
-    r"(?:information|info|record|records|data|details?|mention|evidence|result|results)"
-    r"(?:\s+(?:is\s+)?(?:not\s+)?(?:found|available|stored|recorded|specified|mentioned|documented|known|in memory))*"
-    r".*"
-    r"|not (?:found|available|stored|recorded|specified|mentioned|documented|known)(?: (?:in|from) (?:memory|records?|our records?|stored memories|conversation history?))?\.?"
-    r"|(?:no (?:such )?(?:record|information|info|data|details?|mention|evidence|result|results) (?:found|available|in memory).*)"
-    r"|(?:insufficient information.*)"
-    r"|(?:unknown.*)"
-    r"|not in (?:memory|records?|our records?|conversation history)"
-    r"|none(?: recorded| specified| found)?"
-    r")$",
-    re.IGNORECASE,
-)
-
-
-def _clean_answer(answer: str) -> str:
-    """Post-process an agent answer to remove leaked thinking and verbosity.
-
-    Strips meta-commentary (e.g. "Wait,", "Thought:", "Let me"), takes only
-    the first meaningful line, and maps "not found" / unanswerable responses
-    to empty string so they score correctly against empty ground truth.
-
-    :param answer: Raw agent answer.
-    :returns: Cleaned answer string.
-    """
-    # Strip leaked thinking / meta-commentary (match lines with or without
-    # trailing newline so the pattern catches the last line too)
-    answer = re.sub(
-        r"^(?:Thought|Wait|Hmm|Let me|Action|Action Input|Observation|So,|Based on)[:\s].*?(?:\n|$)",
-        "",
-        answer,
-        flags=re.MULTILINE | re.IGNORECASE,
-    )
-    # Remove "Final Answer:" prefix if present
-    answer = re.sub(r"^Final Answer:\s*", "", answer, flags=re.IGNORECASE)
-    answer = answer.strip()
-    # Take first non-empty line only
-    for line in answer.split("\n"):
-        line = line.strip()
-        if line:
-            answer = line
-            break
-    # Map "not found" / unanswerable responses to empty string
-    if _UNANSWERABLE_RE.match(answer.strip().rstrip(".")):
-        return ""
-    return answer
-
-
 class _AblatedMemory:
-    """Wrapper that restricts tool access based on ablation config."""
+    """Wrapper that restricts tool access based on ablation config.
 
-    def __init__(self, mem: Any, ablation: AblationConfig):
+    The effective allowed-tools set is the intersection of the
+    ablation's ``available_tools`` and an optional
+    ``dataset_tool_filter`` — the latter lets the harness drop tools
+    that cannot meaningfully apply to a given dataset (e.g. spatial
+    tools on LoCoMo's text conversations).
+    """
+
+    def __init__(
+        self,
+        mem: Any,
+        ablation: AblationConfig,
+        dataset_tool_filter: Optional[List[str]] = None,
+    ):
         self._mem = mem
         self._ablation = ablation
+        allowed = set(ablation.available_tools)
+        if dataset_tool_filter is not None:
+            allowed &= set(dataset_tool_filter)
+        self._allowed_tools: set = allowed
 
     def get_tool_definitions(self) -> List[Dict[str, Any]]:
-        return self._ablation.filter_tool_definitions(self._mem.get_tool_definitions())
+        return [
+            t
+            for t in self._mem.get_tool_definitions()
+            if t.get("function", t)["name"] in self._allowed_tools
+        ]
 
     def dispatch_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> str:
-        if tool_name not in self._ablation.available_tools:
+        if tool_name not in self._allowed_tools:
             return f"Tool '{tool_name}' is not available in this configuration."
         return self._mem.dispatch_tool_call(tool_name, arguments)
 
@@ -217,9 +186,11 @@ class BenchmarkRunner:
         llm_client: Any = None,
         agent_factory: Optional[Callable[[Any], Any]] = None,
         max_samples: Optional[int] = None,
+        max_questions_per_sample: Optional[int] = None,
         question_template: Optional[str] = None,
         system_preamble: Optional[str] = None,
         mem_config_overrides: Optional[Dict[str, Any]] = None,
+        dataset_tool_filter: Optional[List[str]] = None,
     ):
         """
         :param loader: Dataset loader yielding :class:`BenchmarkSample` instances.
@@ -230,6 +201,8 @@ class BenchmarkRunner:
         :param agent_factory: ``fn(mem) -> agent`` with a ``.run(query)`` method.
             Defaults to :class:`ReactAgent` via Ollama.
         :param max_samples: Maximum number of samples to evaluate.
+        :param max_questions_per_sample: Cap on questions evaluated per
+            sample. Useful for fast subsample validation runs.
         :param question_template: Template for wrapping questions before passing
             to the agent. Use ``{question}`` as placeholder. If ``None``, the raw
             question is passed directly.
@@ -245,12 +218,21 @@ class BenchmarkRunner:
         self._llm = llm_client
         self._agent_factory = agent_factory
         self._max_samples = max_samples
+        self._max_questions_per_sample = max_questions_per_sample
+        self._dataset_tool_filter = dataset_tool_filter
         self._question_template = question_template
         self._system_preamble = system_preamble
         self._mem_config_overrides = mem_config_overrides or {}
 
     def run(self) -> BenchmarkReport:
-        """Run the full benchmark evaluation.
+        """Run the full benchmark evaluation in two phases.
+
+        Phase 1 runs the agent over every sample and collects predictions
+        with empty score dicts. Phase 2 runs the scorer over the
+        collected predictions. Separating the phases means the agent LLM
+        and the judge LLM are each loaded at most once per benchmark
+        (instead of once per question), which matters when the agent and
+        judge don't both fit in VRAM simultaneously.
 
         :returns: Report with per-sample and aggregate results.
         """
@@ -280,6 +262,8 @@ class BenchmarkRunner:
             report.sample_results.append(sr)
             count += 1
 
+        self._score_samples(report.sample_results)
+
         report.total_time_s = time.monotonic() - t_start
         log.info(
             "[%s] Done: %d samples, mean_score=%.1f, time=%.1fs",
@@ -305,6 +289,10 @@ class BenchmarkRunner:
             "db_path": db_path,
             "hnsw_path": str(Path(db_path).with_suffix(".hnsw.bin")),
         }
+        # Merge order: defaults < ablation overrides < CLI / runner
+        # overrides. So CLI-level flags always win, ablation overrides
+        # fill in what the CLI didn't say.
+        config_kwargs.update(self._ablation.mem_config_overrides)
         config_kwargs.update(self._mem_config_overrides)
         config = SpatioTemporalMemoryConfig(**config_kwargs)
         replay_time = [0.0]
@@ -373,19 +361,26 @@ class BenchmarkRunner:
                     layer_name="agent_position",
                 )
 
-            ablated_mem = _AblatedMemory(mem, self._ablation)
+            ablated_mem = _AblatedMemory(
+                mem,
+                self._ablation,
+                dataset_tool_filter=self._dataset_tool_filter,
+            )
             agent = self._make_agent(ablated_mem)
 
-            for bq in sample.questions:
-                qr = self._run_question(agent, bq)
+            questions = sample.questions
+            if self._max_questions_per_sample is not None:
+                questions = questions[: self._max_questions_per_sample]
+
+            for bq in questions:
+                qr = self._predict_question(agent, bq)
                 sr.question_results.append(qr)
                 tools_str = ",".join(qr.tools_used) if qr.tools_used else "none"
                 gt_short = qr.ground_truth[:40] if qr.ground_truth else "(empty)"
                 log.info(
-                    "  q=%s cat=%s score=%.0f tools=[%s] gt=%s pred=%s",
+                    "  q=%s cat=%s tools=[%s] gt=%s pred=%s",
                     bq.question_id,
                     bq.category or "?",
-                    qr.scores.get("score", -1),
                     tools_str,
                     gt_short,
                     qr.prediction[:80],
@@ -396,29 +391,40 @@ class BenchmarkRunner:
 
         return sr
 
-    def _run_question(self, agent: Any, bq: BenchmarkQuestion) -> QuestionResult:
-        """Run the agent on a single question and score its answer.
+    def _predict_question(self, agent: Any, bq: BenchmarkQuestion) -> QuestionResult:
+        """Run the agent on a single question and return an unscored result.
+
+        Scoring is deferred to :meth:`_score_samples` so the judge LLM is
+        loaded at most once per benchmark.
 
         :param agent: Agent instance with a ``.run(query)`` method.
         :param bq: The benchmark question.
-        :returns: Scored question result.
+        :returns: QuestionResult with a cleaned prediction and an empty
+            ``scores`` dict.
         """
         query = bq.question
         if self._question_template:
             query = self._question_template.format(question=query)
 
         t0 = time.monotonic()
-        result = agent.run(query)
-        latency = time.monotonic() - t0
-
-        answer = _clean_answer(result.answer)
-
-        if hasattr(self._scorer, "score_with_category"):
-            scores = self._scorer.score_with_category(
-                bq.question, answer, bq.answer, bq.category
+        try:
+            result = agent.run(query)
+            latency = time.monotonic() - t0
+            answer = clean_answer(result.answer)
+            tools_used = result.tools_used
+        except RuntimeError as exc:
+            # One pathological question should not abort a whole run.
+            # Record an empty prediction + the exception message so the
+            # failure is visible in the results.
+            latency = time.monotonic() - t0
+            log.warning(
+                "[%s] agent.run failed on q=%s: %s",
+                self._ablation.name,
+                bq.question_id,
+                exc,
             )
-        else:
-            scores = self._scorer.score(bq.question, answer, bq.answer)
+            answer = ""
+            tools_used = []
 
         return QuestionResult(
             question_id=bq.question_id,
@@ -426,10 +432,39 @@ class BenchmarkRunner:
             ground_truth=bq.answer,
             prediction=answer,
             category=bq.category,
-            scores=scores,
-            tools_used=result.tools_used,
+            scores={},
+            tools_used=tools_used,
             tools_expected=bq.tools_expected,
             latency_s=latency,
+        )
+
+    def _score_samples(self, sample_results: List[SampleResult]) -> None:
+        """Score every prediction collected across all samples in one pass.
+
+        Mutates the ``scores`` dict of each ``QuestionResult`` in place.
+
+        :param sample_results: All sample results collected from the
+            prediction phase.
+        """
+        use_category = hasattr(self._scorer, "score_with_category")
+        n_scored = 0
+        t0 = time.monotonic()
+        for sr in sample_results:
+            for qr in sr.question_results:
+                if use_category:
+                    qr.scores = self._scorer.score_with_category(
+                        qr.question, qr.prediction, qr.ground_truth, qr.category
+                    )
+                else:
+                    qr.scores = self._scorer.score(
+                        qr.question, qr.prediction, qr.ground_truth
+                    )
+                n_scored += 1
+        log.info(
+            "[%s] scored %d question results in %.1fs",
+            self._ablation.name,
+            n_scored,
+            time.monotonic() - t0,
         )
 
     def _make_agent(self, mem: Any) -> Any:

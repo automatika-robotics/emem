@@ -191,8 +191,15 @@ class TestAblationConfigs:
             "no_consolidation",
             "no_spatial",
             "flat_layer",
+            "flat_rag",
+            "gen_agents_stream",
+            "no_hybrid",
         }
         assert set(ABLATIONS.keys()) == expected
+
+    def test_no_hybrid_overrides_memory_config(self):
+        abl = ABLATIONS["no_hybrid"]
+        assert abl.mem_config_overrides == {"use_hybrid_retrieval": False}
 
     def test_vector_only_has_one_tool(self):
         abl = ABLATIONS["vector_only"]
