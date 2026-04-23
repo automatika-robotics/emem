@@ -19,7 +19,7 @@ Usage::
     python -m harness.benchmarks.emem_bench.collect_procthor \\
         --output data/emem-bench-v1/ \\
         --n-houses 20 --n-similarity-pairs 4 \\
-        --vlm-model qwen3.5:27b --max-waypoints 15
+        --vlm-model qwen3.6:27b --max-waypoints 15
 """
 
 from __future__ import annotations
@@ -245,7 +245,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             "reproduce a prior run if the dataset upstream updates."
         ),
     )
-    parser.add_argument("--vlm-model", default="qwen3.5:27b")
+    parser.add_argument("--vlm-model", default="qwen3.6:27b")
     parser.add_argument("--ollama-url", default="http://localhost:11434")
     parser.add_argument(
         "--max-waypoints",

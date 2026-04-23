@@ -98,7 +98,7 @@ def is_valid_place(place: str) -> bool:
 def make_ollama_vlm(model: str, base_url: str) -> Any:
     """Construct an Ollama-backed VLM client.
 
-    :param model: Ollama model tag (e.g. ``"qwen3.5:27b"``).
+    :param model: Ollama model tag (e.g. ``"qwen3.6:27b"``).
     :param base_url: Ollama server URL.
     :returns: VLM client exposing ``.describe(image, prompt)``.
     """

@@ -6,8 +6,8 @@ import logging
 
 _DEFAULTS = {
     "ollama": {
-        "vlm": "qwen3.5:latest",
-        "llm": "qwen3.5:latest",
+        "vlm": "qwen3.6:latest",
+        "llm": "qwen3.6:latest",
         "embed": "nomic-embed-text-v2-moe:latest",
     },
     "gemini": {

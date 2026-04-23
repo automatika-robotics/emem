@@ -462,8 +462,8 @@ def main(argv: Optional[List[str]] = None) -> None:  # noqa: C901  # TODO: split
     parser.add_argument("--embed-model", default="nomic-embed-text-v2-moe:latest")
     parser.add_argument(
         "--llm-model",
-        default="qwen3.5:27b",
-        help="Agent LLM model (default: qwen3.5:27b)",
+        default="qwen3.6:27b",
+        help="Agent LLM model (default: qwen3.6:27b)",
     )
     parser.add_argument(
         "--judge-model",

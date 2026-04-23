@@ -43,7 +43,7 @@ UNANSWERABLE_RE = re.compile(
 )
 
 _LEAK_RE = re.compile(
-    r"^(?:Thought|Wait|Hmm|Let me|Action|Action Input|Observation|So,|Based on)[:\s].*?(?:\n|$)",
+    r"^(?:Thought|Wait|Hmm|Let me|Action|Action Input|Observation|So,)[:\s].*?(?:\n|$)",
     re.MULTILINE | re.IGNORECASE,
 )
 

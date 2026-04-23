@@ -180,7 +180,7 @@ class ReactAgent(_BaseReactAgent):
     def __init__(
         self,
         mem: Any,
-        model: str = "qwen3.5:latest",
+        model: str = "qwen3.6:latest",
         base_url: str = "http://localhost:11434",
         max_steps: int = 5,
         system_prompt: str | None = None,
@@ -278,7 +278,7 @@ def ollama_model_supports_tools(model: str, base_url: str) -> bool:
     """Probe ``/api/show`` to check whether an Ollama model declares the
     ``tools`` capability.
 
-    :param model: Model tag, e.g. ``"qwen3.5:27b"``.
+    :param model: Model tag, e.g. ``"qwen3.6:27b"``.
     :param base_url: Ollama server URL.
     :returns: ``True`` if the model's capabilities include ``"tools"``,
         ``False`` otherwise (including when the probe fails).
@@ -335,7 +335,7 @@ class NativeToolCallAgent:
     def __init__(
         self,
         mem: Any,
-        model: str = "qwen3.5:latest",
+        model: str = "qwen3.6:latest",
         base_url: str = "http://localhost:11434",
         max_steps: int = 5,
         system_prompt: str | None = None,

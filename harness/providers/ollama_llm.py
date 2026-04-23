@@ -16,7 +16,7 @@ class OllamaLLMClient:
 
     def __init__(
         self,
-        model: str = "qwen3.5:latest",
+        model: str = "qwen3.6:latest",
         base_url: str = "http://localhost:11434",
         seed: int | None = None,
     ):

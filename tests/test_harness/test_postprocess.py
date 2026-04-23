@@ -58,6 +58,13 @@ def test_real_answer_containing_no_is_preserved() -> None:
     assert clean_answer("No, she did not attend.") == "No, she did not attend."
 
 
+def test_based_on_prefix_is_not_stripped() -> None:
+    # Agents whose natural phrasing opens with "Based on my observations, ..."
+    # (e.g. Qwen 3.6) produce valid answers the leak filter must not eat.
+    answer = "Based on my observations, the door at the kitchen entrance is red."
+    assert clean_answer(answer) == answer
+
+
 def test_whitespace_only_input_is_empty() -> None:
     assert clean_answer("   \n\t\n") == ""
 
