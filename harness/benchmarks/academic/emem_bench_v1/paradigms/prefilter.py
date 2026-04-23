@@ -9,8 +9,7 @@ test the paradigm.
 
 The LLM is provided via a minimal ``chat(prompt: str) -> str``
 callable, matching the ``_chat`` / ``_generate`` interface that the
-OllamaLLMClient and GeminiLLMClient expose. Tests pass a stub
-callable — no real LLM required.
+OllamaLLMClient and GeminiLLMClient expose.
 """
 
 from __future__ import annotations

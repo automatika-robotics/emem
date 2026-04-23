@@ -10,8 +10,7 @@ A paradigm implementation provides:
    curated candidate into a :class:`~...emem_bench_v1.schedule.Schedule`
    at benchmark run time.
 
-Everything here is format-only: no LLM calls, no disk writes. The
-CLI (:mod:`.review`) and the pre-filter (:mod:`.prefilter`) consume
+The CLI (:mod:`.review`) and the pre-filter (:mod:`.prefilter`) consume
 these dataclasses.
 """
 
