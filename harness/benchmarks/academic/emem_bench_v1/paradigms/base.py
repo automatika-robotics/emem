@@ -136,6 +136,26 @@ class ParadigmGenerator(ABC):
 
     name: str = ""
 
+    def scene_units(self, scenes: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+        """Group the scene stream into the unit the paradigm acts on.
+
+        Default: each scene is its own unit (one-house paradigms like
+        DRM, pattern completion, source monitoring). Paradigms that
+        bind two or more scenes together (pattern separation pairs
+        two houses by ``similarity_pair_id``) override this to return
+        the groups the CLI should iterate over.
+
+        The CLI then calls :meth:`generate` once per unit with that
+        unit's scenes as the ``scenes`` argument. Returning ``[[s] for
+        s in scenes]`` preserves incremental per-scene logging and
+        disk writes.
+
+        :param scenes: Flat scene list from
+            :func:`...scene_entries.load_scene_entries`.
+        :returns: List of scene lists; one per independent unit.
+        """
+        return [[s] for s in scenes]
+
     @abstractmethod
     def generate(
         self,
