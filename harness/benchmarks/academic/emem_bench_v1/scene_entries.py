@@ -71,13 +71,13 @@ def group_waypoints_by_room(
 ) -> Dict[str, Dict[str, Any]]:
     """Group trajectory waypoints by ``room_type``.
 
-    For each room type we aggregate the ``detections``, ``place``, and
-    ``vlm`` layer text plus the count of waypoints that landed there.
-    Waypoints with no ``room_type`` (agent standing in a doorway /
-    outside any polygon) are bucketed under ``"outside"``.
+    For each room type we aggregate the ``object_detection``,
+    ``place``, and ``vlm`` layer text plus the count of waypoints that
+    landed there. Waypoints with no ``room_type`` (agent standing in a
+    doorway / outside any polygon) are bucketed under ``"outside"``.
 
     :param trajectory: List of waypoint dicts from a merged scene entry.
-    :returns: Mapping ``room_type -> {"n_waypoints", "detections",
+    :returns: Mapping ``room_type -> {"n_waypoints", "object_detection",
         "vlm_descriptions", "places"}``.
     """
     agg: Dict[str, Dict[str, Any]] = {}
@@ -87,7 +87,7 @@ def group_waypoints_by_room(
             room_type,
             {
                 "n_waypoints": 0,
-                "detections": [],
+                "object_detection": [],
                 "vlm_descriptions": [],
                 "places": [],
             },
@@ -95,7 +95,7 @@ def group_waypoints_by_room(
         bucket["n_waypoints"] += 1
         layers = wp.get("layers") or {}
         for key, dest in (
-            ("detections", "detections"),
+            ("object_detection", "object_detection"),
             ("vlm", "vlm_descriptions"),
             ("place", "places"),
         ):

@@ -73,6 +73,100 @@ def room_at_position(
     return None
 
 
+def _object_type_from_id(obj_id: str) -> str:
+    """Extract the ProcTHOR object type from its ``id`` field.
+
+    Raw ProcTHOR house dicts (as loaded by ``prior.load_dataset``) do
+    NOT carry an ``objectType`` field on their object records — the
+    type is encoded as the first segment of the ``id`` before the
+    first ``|`` separator. For example ``"Bed|4|0"`` → ``"Bed"``,
+    ``"TVStand|4|2|0"`` → ``"TVStand"``. Runtime AI2-THOR adds
+    ``objectType`` when a scene is loaded, but we work from the
+    offline dataset here and must parse it ourselves.
+    """
+    if not obj_id:
+        return ""
+    return obj_id.split("|", 1)[0]
+
+
+def _walk_object_tree(
+    obj: Dict[str, Any],
+) -> List[Tuple[str, Dict[str, float]]]:
+    """Yield ``(type, position)`` for ``obj`` and every child, recursively.
+
+    ProcTHOR objects form a tree: a ``TVStand`` node's ``children``
+    list contains the TV, remote, etc., each with its own position.
+    Flattening the tree lets the room-attribution step see every
+    physical item, not just the top-level receptacles.
+    """
+    out: List[Tuple[str, Dict[str, float]]] = []
+    otype = _object_type_from_id(str(obj.get("id") or ""))
+    pos = obj.get("position") or {}
+    if otype and isinstance(pos, dict):
+        out.append((otype, pos))
+    for child in obj.get("children") or []:
+        if isinstance(child, dict):
+            out.extend(_walk_object_tree(child))
+    return out
+
+
+def objects_by_room(house: Dict[str, Any]) -> Dict[str, List[str]]:
+    """Return the ProcTHOR object types grouped by the room they're in.
+
+    Walks the full object tree (top-level objects plus their
+    ``children``) and attributes each to a room via point-in-polygon
+    on its floor-plane ``(x, z)``. Objects outside every room
+    polygon — hallway fixtures, doors, structural items — are
+    bucketed under ``"outside"``.
+
+    This is the only paradigm-facing source of truth for "what's
+    actually in the kitchen": it comes from the simulator's own
+    object table, not from VLM captions.
+
+    :param house: A ProcTHOR house dict (``prior.load_dataset`` row).
+    :returns: Mapping ``roomType -> [objectType, ...]``. ObjectTypes
+        appear once per physical instance (including children);
+        callers can dedupe if they only care about presence.
+    """
+    out: Dict[str, List[str]] = {}
+    for obj in house.get("objects", []):
+        for otype, pos in _walk_object_tree(obj):
+            try:
+                x = float(pos.get("x", 0.0))
+                z = float(pos.get("z", 0.0))
+            except (TypeError, ValueError):
+                continue
+            room = room_at_position(house, x, z)
+            key = room["roomType"] if room else "outside"
+            out.setdefault(key, []).append(otype)
+    return out
+
+
+def objects_by_room_id(house: Dict[str, Any]) -> Dict[str, List[str]]:
+    """Same as :func:`objects_by_room` but keyed by ``room.id``.
+
+    Source-monitoring needs per-frame ground truth, and a ProcTHOR
+    house can have two rooms of the same type (e.g. two bedrooms);
+    grouping by ``roomType`` would conflate them. This variant keys
+    by the unique room id.
+
+    Objects outside every room polygon are bucketed under
+    ``"outside"``.
+    """
+    out: Dict[str, List[str]] = {}
+    for obj in house.get("objects", []):
+        for otype, pos in _walk_object_tree(obj):
+            try:
+                x = float(pos.get("x", 0.0))
+                z = float(pos.get("z", 0.0))
+            except (TypeError, ValueError):
+                continue
+            room = room_at_position(house, x, z)
+            key = room["id"] if room else "outside"
+            out.setdefault(key, []).append(otype)
+    return out
+
+
 def house_metadata(house: Dict[str, Any]) -> Dict[str, Any]:
     """Summarise a ProcTHOR house for the scene manifest.
 
