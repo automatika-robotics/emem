@@ -41,12 +41,24 @@ from harness.benchmarks.academic.emem_bench_v1.paradigms.base import (
 log = logging.getLogger(__name__)
 
 
-def _render(candidate: CandidateQuestion, idx: int, total: int) -> str:
-    """Format a candidate for terminal display."""
+def _render(
+    candidate: CandidateQuestion,
+    idx: int,
+    total: int,
+    scene_context: str = "",
+) -> str:
+    """Format a candidate for terminal display.
+
+    :param scene_context: Optional pre-formatted block describing the
+        scene / room the question is about (e.g. the full list of
+        observations from the probe's room). Appears between metadata
+        and notes when non-empty.
+    """
     meta_lines = [
         f"    {k}: {v}" for k, v in sorted(candidate.paradigm_metadata.items())
     ]
     meta_block = "\n".join(meta_lines) if meta_lines else "    (none)"
+    context_block = f"  scene context:\n{scene_context}\n" if scene_context else ""
     return (
         f"\n────────── candidate {idx + 1}/{total} ──────────\n"
         f"  paradigm: {candidate.paradigm}\n"
@@ -55,8 +67,78 @@ def _render(candidate: CandidateQuestion, idx: int, total: int) -> str:
         f"  answer:   {candidate.answer}\n"
         f"  tools:    {', '.join(candidate.tools_expected) or '-'}\n"
         f"  metadata:\n{meta_block}\n"
+        f"{context_block}"
         f"  notes:    {candidate.generator_notes or '-'}\n"
     )
+
+
+def _build_scene_context_fn(
+    data_dir: Optional[Path],
+) -> Callable[[CandidateQuestion], str]:
+    """Return a closure that produces the scene-context block for one candidate.
+
+    When the candidate embeds a ground-truth object list in
+    ``paradigm_metadata`` (the DRM generator does this), we surface
+    that list directly — it's ProcTHOR's simulator-level truth, not
+    VLM text. When the list isn't present on the candidate but
+    ``data_dir`` is set, we still fall back to loading the scene
+    manifest so the reviewer sees *something* about the house.
+
+    When ``data_dir`` is None and the candidate has no embedded
+    ground truth, returns an empty string.
+    """
+    if data_dir is not None:
+        from harness.benchmarks.academic.emem_bench_v1.scene_entries import (
+            load_scene_entries,
+        )
+
+        scenes_by_id = {s["sample_id"]: s for s in load_scene_entries(data_dir)}
+    else:
+        scenes_by_id = {}
+
+    def context_for(candidate: CandidateQuestion) -> str:
+        md = candidate.paradigm_metadata
+        room_type = md.get("room_type")
+        gt_objects = md.get("ground_truth_objects_in_room")
+
+        # Primary display: the ProcTHOR ground-truth object list
+        # embedded on the candidate at generation time.
+        if gt_objects:
+            header = f"    room={room_type or '?'}  (ProcTHOR ground truth)"
+            unique = list(dict.fromkeys(str(t) for t in gt_objects))
+            body = "\n".join(f"      - {t}" for t in unique)
+            return f"{header}\n{body}"
+
+        # Source-monitoring: render the OD inventory so the reviewer
+        # can verify the source attribution (probe is in OD-only
+        # → answer should be 'object detection'; probe is in VLM-only
+        # → answer should be 'scene description').
+        od_inventory = md.get("object_detection_inventory")
+        if od_inventory:
+            source = md.get("source", "?")
+            probe = md.get("probe_object", "?")
+            header = (
+                f"    source={source}  probe={probe!r}\n"
+                f"    object_detection inventory (ProcTHOR ground truth)"
+            )
+            unique = list(dict.fromkeys(str(t) for t in od_inventory))
+            body = "\n".join(f"      - {t}" for t in unique)
+            return f"{header}\n{body}"
+
+        # Fallback — ``data_dir`` was supplied but the candidate
+        # predates the ground-truth embedding. Don't show VLM text;
+        # just tell the reviewer the ground truth isn't available.
+        if candidate.scene_ids:
+            scene = scenes_by_id.get(candidate.scene_ids[0])
+            if scene is None:
+                return f"    (scene {candidate.scene_ids[0]!r} not in data_dir)"
+            return (
+                "    (candidate predates ground-truth embedding; "
+                "regenerate to attach ProcTHOR object list)"
+            )
+        return ""
+
+    return context_for
 
 
 def _prompt_input(prompt: str) -> str:
@@ -106,6 +188,7 @@ def run_review(
     *,
     input_fn: Callable[[str], str] = _prompt_input,
     output_fn: Callable[[str], None] = print,
+    data_dir: Optional[Path] = None,
 ) -> Tuple[int, int]:
     """Drive an interactive review session.
 
@@ -116,8 +199,14 @@ def run_review(
     :param output_fn: Indirection for ``print()`` — tests capture by
         redirecting, but keeping this explicit makes the hot loop
         easy to mock.
+    :param data_dir: Optional v1 scene directory. When provided, each
+        candidate's scene is loaded and the full observation list for
+        the probe's ``room_type`` is shown — so the reviewer can
+        verify the ground truth (e.g. "this object really isn't in
+        the room") without trusting the post-filter blindly.
     :returns: ``(n_curated, n_rejected)`` after the session ends.
     """
+    context_for = _build_scene_context_fn(data_dir)
     curated_path, rejected_path, inprogress_path = _output_paths(candidates_path)
     all_candidates = load_candidates(candidates_path)
     previously_reviewed = load_candidates(inprogress_path)
@@ -150,7 +239,9 @@ def run_review(
 
     while idx_holder[0] < len(pending):
         cand = pending[idx_holder[0]]
-        output_fn(_render(cand, idx_holder[0], len(pending)))
+        output_fn(
+            _render(cand, idx_holder[0], len(pending), scene_context=context_for(cand))
+        )
         raw = input_fn("  decision [k/e/d/s/n/?/q]: ").strip().lower() or "s"
         if raw == "q":
             output_fn("  quitting; progress saved.")
@@ -209,6 +300,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         type=Path,
         help="Path to the paradigm candidates JSONL to review.",
     )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path to the v1 scenes directory. When set, each "
+            "candidate's full room-observation list is shown so the "
+            "reviewer can verify the probe target's presence/absence."
+        ),
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
     logging.basicConfig(
@@ -218,7 +319,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.candidates.exists():
         print(f"error: candidates file not found: {args.candidates}", file=sys.stderr)
         return 2
-    run_review(args.candidates)
+    run_review(args.candidates, data_dir=args.data_dir)
     return 0
 
 

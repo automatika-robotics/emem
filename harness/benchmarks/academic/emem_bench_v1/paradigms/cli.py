@@ -23,7 +23,34 @@ from harness.benchmarks.academic.emem_bench_v1.paradigms.base import (
     load_candidates,
     save_candidates,
 )
-from harness.benchmarks.academic.emem_bench_v1.paradigms.drm import DRMGenerator
+from harness.benchmarks.academic.emem_bench_v1.paradigms.drm import (
+    DRMGenerator,
+    make_prior_house_lookup,
+)
+from harness.benchmarks.academic.emem_bench_v1.paradigms.pattern_completion import (
+    PatternCompletionGenerator,
+)
+from harness.benchmarks.academic.emem_bench_v1.paradigms.context_dependent_retrieval import (
+    ContextDependentRetrievalGenerator,
+)
+from harness.benchmarks.academic.emem_bench_v1.paradigms.long_horizon_interference import (
+    LongHorizonInterferenceGenerator,
+)
+from harness.benchmarks.academic.emem_bench_v1.paradigms.prospective_memory import (
+    ProspectiveMemoryGenerator,
+)
+from harness.benchmarks.academic.emem_bench_v1.paradigms.serial_position import (
+    SerialPositionGenerator,
+)
+from harness.benchmarks.academic.emem_bench_v1.paradigms.pattern_separation import (
+    PatternSeparationGenerator,
+)
+from harness.benchmarks.academic.emem_bench_v1.paradigms.retention_interval_decay import (
+    RetentionIntervalDecayGenerator,
+)
+from harness.benchmarks.academic.emem_bench_v1.paradigms.source_monitoring import (
+    SourceMonitoringGenerator,
+)
 from harness.benchmarks.academic.emem_bench_v1.paradigms.prefilter import (
     prefilter_candidates,
     rubric_summary,
@@ -34,13 +61,168 @@ from harness.benchmarks.academic.emem_bench_v1.scene_entries import (
 )
 
 
+def _make_drm_generator(chat: Callable[[str], str], total: int) -> ParadigmGenerator:
+    """Build the DRM generator with a ProcTHOR-backed house lookup.
+
+    The house lookup re-uses the cached ProcTHOR-10K download so
+    generation pulls real per-room object lists from the simulator
+    rather than VLM captions.
+    """
+    return DRMGenerator(
+        llm_chat=chat,
+        house_lookup=make_prior_house_lookup(),
+        target_total=total,
+    )
+
+
+def _make_pattern_separation_generator(
+    chat: Callable[[str], str], total: int
+) -> ParadigmGenerator:
+    """Build the pattern-separation generator with a ProcTHOR-backed house lookup."""
+    return PatternSeparationGenerator(
+        llm_chat=chat,
+        house_lookup=make_prior_house_lookup(),
+        target_total=total,
+    )
+
+
+def _make_pattern_completion_generator(
+    chat: Callable[[str], str], total: int
+) -> ParadigmGenerator:
+    """Build the pattern-completion generator with a ProcTHOR-backed house lookup."""
+    return PatternCompletionGenerator(
+        llm_chat=chat,
+        house_lookup=make_prior_house_lookup(),
+        target_total=total,
+    )
+
+
+def _make_source_monitoring_generator(
+    chat: Callable[[str], str], total: int
+) -> ParadigmGenerator:
+    """Build the source-monitoring generator.
+
+    Source-monitoring works on the trajectory's per-frame layer text
+    directly (vlm + object_detection), so it doesn't need a ProcTHOR
+    house lookup the way DRM / pattern_separation /
+    pattern_completion do.
+    """
+    return SourceMonitoringGenerator(llm_chat=chat, target_total=total)
+
+
+def _make_retention_interval_decay_generator(
+    chat: Callable[[str], str], total: int
+) -> ParadigmGenerator:
+    """Build the retention-interval-decay generator with a ProcTHOR house lookup."""
+    return RetentionIntervalDecayGenerator(
+        llm_chat=chat,
+        house_lookup=make_prior_house_lookup(),
+        target_total=total,
+    )
+
+
+def _make_context_dependent_retrieval_generator(
+    chat: Callable[[str], str], total: int
+) -> ParadigmGenerator:
+    """Build the context-dependent-retrieval generator with a ProcTHOR house lookup."""
+    return ContextDependentRetrievalGenerator(
+        llm_chat=chat,
+        house_lookup=make_prior_house_lookup(),
+        target_total=total,
+    )
+
+
+def _make_prospective_memory_generator(
+    chat: Callable[[str], str], total: int
+) -> ParadigmGenerator:
+    """Build the prospective-memory generator with a ProcTHOR house lookup.
+
+    Doesn't actually use ``chat`` — PM generation is deterministic
+    (templated instructions, ProcTHOR-derived items, rotated action
+    vocabulary). The factory still accepts ``chat`` to match the
+    registry signature.
+    """
+    del chat
+    return ProspectiveMemoryGenerator(
+        house_lookup=make_prior_house_lookup(),
+        target_total=total,
+    )
+
+
+def _make_long_horizon_interference_generator(
+    chat: Callable[[str], str], total: int
+) -> ParadigmGenerator:
+    """Build the long-horizon-interference generator with a ProcTHOR house lookup.
+
+    Like prospective_memory, generation is deterministic (set
+    arithmetic on ground-truth object types per house pair) so
+    ``chat`` is unused.
+    """
+    del chat
+    return LongHorizonInterferenceGenerator(
+        house_lookup=make_prior_house_lookup(),
+        target_total=total,
+    )
+
+
+def _make_serial_position_generator(
+    chat: Callable[[str], str], total: int
+) -> ParadigmGenerator:
+    """Build the serial-position generator with a ProcTHOR house lookup.
+
+    Deterministic (chain partitioning + per-house unique-set
+    arithmetic) so ``chat`` is unused.
+    """
+    del chat
+    return SerialPositionGenerator(
+        house_lookup=make_prior_house_lookup(),
+        target_total=total,
+    )
+
+
+def _load_exclude_probes(
+    paths: List[Path],
+) -> Dict[str, set]:
+    """Read prior candidate JSONL files and collect probe objects per group.
+
+    Used by the ``generate`` command's ``--exclude-from`` flag so a
+    supplemental run can avoid proposing anything the reviewer has
+    already seen (whether they kept or rejected it). The grouping key
+    is paradigm-specific: ``room_type`` for DRM / pattern-completion,
+    ``source`` for source-monitoring. Candidates missing
+    ``paradigm_metadata`` (or both grouping keys) are skipped.
+    """
+    out: Dict[str, set] = {}
+    for path in paths:
+        if not path.exists():
+            print(
+                f"warning: --exclude-from {path} not found; skipping", file=sys.stderr
+            )
+            continue
+        for cand in load_candidates(path):
+            md = cand.paradigm_metadata
+            group = md.get("room_type") or md.get("source")
+            probe = md.get("probe_object")
+            if group and probe:
+                out.setdefault(str(group), set()).add(str(probe))
+    return out
+
+
 # Registry of paradigm factories keyed by name. Factories take a
-# single ``llm_chat`` callable and return a configured generator.
-# Adding a new paradigm is a one-line change here.
+# single ``llm_chat`` callable + target-total and return a configured
+# generator. Adding a new paradigm is a one-line change here.
 _PARADIGM_REGISTRY: Dict[
     str, Callable[[Callable[[str], str], int], ParadigmGenerator]
 ] = {
-    "drm": lambda chat, total: DRMGenerator(llm_chat=chat, target_total=total),
+    "drm": _make_drm_generator,
+    "pattern_separation": _make_pattern_separation_generator,
+    "pattern_completion": _make_pattern_completion_generator,
+    "source_monitoring": _make_source_monitoring_generator,
+    "retention_interval_decay": _make_retention_interval_decay_generator,
+    "context_dependent_retrieval": _make_context_dependent_retrieval_generator,
+    "prospective_memory": _make_prospective_memory_generator,
+    "long_horizon_interference": _make_long_horizon_interference_generator,
+    "serial_position": _make_serial_position_generator,
 }
 
 
@@ -82,6 +264,15 @@ def cmd_generate(args: argparse.Namespace) -> int:
         )
         return 2
     scenes = load_scene_entries(Path(args.data_dir), max_samples=args.max_samples)
+    if args.only_scenes:
+        wanted = set(args.only_scenes)
+        scenes = [s for s in scenes if s.get("sample_id") in wanted]
+        missing = wanted - {s.get("sample_id") for s in scenes}
+        if missing:
+            print(
+                f"warning: --only-scenes had no match for: {sorted(missing)}",
+                file=sys.stderr,
+            )
     if not scenes:
         print(f"error: no scenes found in {args.data_dir}", file=sys.stderr)
         return 2
@@ -92,6 +283,22 @@ def cmd_generate(args: argparse.Namespace) -> int:
     # Target-total is enforced outside, so pass a large cap into the
     # generator and control budget via the per-scene loop.
     generator = factory(llm_chat, args.target_total * 2)
+    if args.exclude_from:
+        exclude_paths = [Path(p) for p in args.exclude_from]
+        excluded = _load_exclude_probes(exclude_paths)
+        if excluded and hasattr(generator, "_excluded"):
+            # Seed the generator's exclusion set with the union of
+            # probes from every --exclude-from file.
+            for room, probes in excluded.items():
+                generator._excluded.setdefault(room, set()).update(
+                    p.lower() for p in probes
+                )
+            print(
+                f"exclusion list loaded: "
+                f"{sum(len(v) for v in excluded.values())} probes across "
+                f"{len(excluded)} rooms",
+                flush=True,
+            )
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -100,25 +307,31 @@ def cmd_generate(args: argparse.Namespace) -> int:
     out_path.write_text("")
     total = 0
     seen_ids: set = set()
-    for i, scene in enumerate(scenes, start=1):
+    units = generator.scene_units(scenes)
+    for i, unit in enumerate(units, start=1):
         if total >= args.target_total:
             break
         remaining = args.target_total - total
         budget = min(args.n_per_scene, remaining)
-        cands = generator.generate([scene], n_per_scene=budget, seed=args.seed or 0)
+        cands = generator.generate(unit, n_per_scene=budget, seed=args.seed or 0)
         with out_path.open("a") as f:
             written = 0
             for c in cands:
                 if c.question_id in seen_ids:
-                    continue  # dedupe across scenes with identical probes
+                    continue  # dedupe across units with identical probes
                 seen_ids.add(c.question_id)
                 f.write(_json.dumps(c.to_dict()) + "\n")
                 written += 1
                 total += 1
                 if total >= args.target_total:
                     break
+        label = (
+            unit[0].get("sample_id", "?")
+            if len(unit) == 1
+            else " + ".join(s.get("sample_id", "?") for s in unit)
+        )
         print(
-            f"scene {i}/{len(scenes)} {scene.get('sample_id', '?')}: "
+            f"unit {i}/{len(units)} {label}: "
             f"+{written} candidates (total: {total}/{args.target_total})",
             flush=True,
         )
@@ -127,12 +340,18 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
 
 def cmd_review(args: argparse.Namespace) -> int:
-    """Run the interactive review CLI on a candidates file."""
+    """Run the interactive review CLI on a candidates file.
+
+    With ``--data-dir``, the reviewer also sees the full observation
+    list for each candidate's probe room so they can verify the
+    ground-truth answer without trusting the post-filter blindly.
+    """
     path = Path(args.candidates)
     if not path.exists():
         print(f"error: candidates file not found: {path}", file=sys.stderr)
         return 2
-    run_review(path)
+    data_dir = Path(args.data_dir) if args.data_dir else None
+    run_review(path, data_dir=data_dir)
     return 0
 
 
@@ -181,6 +400,28 @@ def _build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--n-per-scene", type=int, default=6)
     gen.add_argument("--target-total", type=int, default=120)
     gen.add_argument("--max-samples", type=int, default=None)
+    gen.add_argument(
+        "--only-scenes",
+        action="append",
+        default=[],
+        help=(
+            "Restrict generation to the named sample_ids (repeatable). "
+            "Applied after --max-samples. Useful for resuming a single "
+            "scene after a killed run without rebuilding the manifest."
+        ),
+    )
+    gen.add_argument(
+        "--exclude-from",
+        action="append",
+        default=[],
+        help=(
+            "Path to a prior candidates/curated/rejected JSONL. Probe "
+            "objects from those files are fed into the generator as an "
+            "exclusion set per room, so supplemental runs propose new "
+            "items instead of repeating what the reviewer has seen. "
+            "Can be passed multiple times."
+        ),
+    )
     gen.add_argument("--provider", default="ollama", choices=["ollama", "gemini"])
     gen.add_argument("--llm-model", default="qwen3.6:27b")
     gen.add_argument("--ollama-url", default="http://localhost:11434")
@@ -189,6 +430,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     rev = subparsers.add_parser("review", help="interactive human review")
     rev.add_argument("candidates")
+    rev.add_argument(
+        "--data-dir",
+        default=None,
+        help=(
+            "Optional path to the v1 scenes directory. When set, each "
+            "candidate's full room-observation list is shown in the "
+            "review panel so the reviewer can verify the ground truth."
+        ),
+    )
     rev.set_defaults(func=cmd_review)
 
     pre = subparsers.add_parser("prefilter", help="apply the paradigm's rubric via LLM")
