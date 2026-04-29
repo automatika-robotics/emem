@@ -59,7 +59,6 @@ class OllamaLLMClient:
         self,
         prompt: str,
         max_tokens: int | None = None,
-        think: bool | None = None,
     ) -> str:
         body: dict = {
             "model": self._model,
@@ -74,6 +73,6 @@ class OllamaLLMClient:
         if options:
             body["options"] = options
         if self._thinks:
-            body["think"] = think if think is not None else False
-        data = post_json(self._url, body, timeout=900)
+            body["think"] = False
+        data = post_json(self._url, body, timeout=1800)
         return strip_think_tags(data["message"]["content"])

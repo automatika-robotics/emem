@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 
 
-UNANSWERABLE_RE = re.compile(
+_UNANSWERABLE_RE = re.compile(
     r"^("
     r"unanswerable"
     r"|(?:no |not )?"
@@ -65,6 +65,6 @@ def clean_answer(answer: str) -> str:
         if line:
             answer = line
             break
-    if UNANSWERABLE_RE.match(answer.strip().rstrip(".")):
+    if _UNANSWERABLE_RE.match(answer.strip().rstrip(".")):
         return ""
     return answer

@@ -157,13 +157,16 @@ class _AblatedMemory:
         if dataset_tool_filter is not None:
             allowed &= set(dataset_tool_filter)
         self._allowed_tools: set = allowed
+        self._cached_tool_defs: Optional[List[Dict[str, Any]]] = None
 
     def get_tool_definitions(self) -> List[Dict[str, Any]]:
-        return [
-            t
-            for t in self._mem.get_tool_definitions()
-            if t.get("function", t)["name"] in self._allowed_tools
-        ]
+        if self._cached_tool_defs is None:
+            self._cached_tool_defs = [
+                t
+                for t in self._mem.get_tool_definitions()
+                if t.get("function", t)["name"] in self._allowed_tools
+            ]
+        return self._cached_tool_defs
 
     def dispatch_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         if tool_name not in self._allowed_tools:
@@ -188,7 +191,6 @@ class BenchmarkRunner:
         max_samples: Optional[int] = None,
         max_questions_per_sample: Optional[int] = None,
         question_template: Optional[str] = None,
-        system_preamble: Optional[str] = None,
         mem_config_overrides: Optional[Dict[str, Any]] = None,
         dataset_tool_filter: Optional[List[str]] = None,
     ):
@@ -206,8 +208,6 @@ class BenchmarkRunner:
         :param question_template: Template for wrapping questions before passing
             to the agent. Use ``{question}`` as placeholder. If ``None``, the raw
             question is passed directly.
-        :param system_preamble: Custom preamble for the agent's system prompt,
-            placed before the tool definitions. If ``None``, uses the default.
         :param mem_config_overrides: Dict of field overrides applied to the
             default :class:`SpatioTemporalMemoryConfig` for each sample.
         """
@@ -221,7 +221,6 @@ class BenchmarkRunner:
         self._max_questions_per_sample = max_questions_per_sample
         self._dataset_tool_filter = dataset_tool_filter
         self._question_template = question_template
-        self._system_preamble = system_preamble
         self._mem_config_overrides = mem_config_overrides or {}
 
     def run(self) -> BenchmarkReport:
@@ -477,19 +476,4 @@ class BenchmarkRunner:
             return self._agent_factory(mem)
         from harness.agent.react_agent import ReactAgent
 
-        return ReactAgent(mem, system_prompt=self._build_system_prompt(mem))
-
-    def _build_system_prompt(self, mem: Any) -> str | None:
-        """Build a system prompt with a custom preamble, if set.
-
-        :param mem: Memory instance for tool definitions.
-        :returns: Custom system prompt, or ``None`` to use the default.
-        """
-        if self._system_preamble is None:
-            return None
-        from harness.agent.prompts import build_system_prompt
-
-        return build_system_prompt(
-            mem.get_tool_definitions(),
-            preamble=self._system_preamble,
-        )
+        return ReactAgent(mem)

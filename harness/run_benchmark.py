@@ -56,13 +56,10 @@ def _make_scorer(dataset: str, **kwargs: Any) -> Any:
 
         return F1Scorer()
     if dataset == "emem-bench-v1":
-        # LLM-judge scoring. Paradigm generators (A14b/c) can swap in
-        # a per-paradigm scorer later; for now we reuse the generic
-        # EMEMBenchScorer that the v0 scorer module still exposes.
         from harness.benchmarks.academic.scorers.emem_bench import EMEMBenchScorer
 
-        judge_client = kwargs.get("judge_client") or kwargs.get("llm_client")
-        provider = kwargs.get("judge_provider") or kwargs.get("provider", "ollama")
+        judge_client = kwargs["judge_client"]
+        provider = kwargs.get("provider", "ollama")
         llm_chat = (
             judge_client._generate if provider == "gemini" else judge_client._chat
         )
@@ -110,17 +107,6 @@ def _make_providers(
     raise ValueError(f"Unknown provider: {provider!r}")
 
 
-def _dataset_tool_filter(dataset: str) -> Optional[List[str]]:
-    """Return the dataset-specific tool allow-list, or ``None`` for no filter.
-
-    LoCoMo runs over text conversations so spatial/body-state tools are
-    filtered out to shrink the choice space for the agent's tool
-    selector. eMEM-Bench exercises all 10 tools and gets no filter.
-    """
-    filt = DATASET_TOOL_FILTERS.get(dataset)
-    return list(filt) if filt is not None else None
-
-
 def _apply_seed(seed: Optional[int]) -> None:
     """Seed Python's ``random`` and NumPy. The Ollama sampler seed is
     applied per-request via the LLM client configuration elsewhere.
@@ -155,7 +141,7 @@ def _aggregate_summary(reports: List[BenchmarkReport]) -> Dict[str, Any]:
         if not xs:
             return {"mean": 0.0, "stderr": 0.0}
         if len(xs) == 1:
-            return {"mean": xs[0], "stderr": 0.0}
+            return {"mean": round(xs[0], 2), "stderr": 0.0}
         mean = statistics.fmean(xs)
         stderr = statistics.stdev(xs) / math.sqrt(len(xs))
         return {"mean": round(mean, 2), "stderr": round(stderr, 2)}
@@ -246,6 +232,9 @@ def _build_runner(
     routes to :class:`ScheduleRunner`, which iterates schedule phases
     instead of a flat ingest-then-query pass.
     """
+    tool_filter = DATASET_TOOL_FILTERS.get(dataset)
+    tool_filter_list = list(tool_filter) if tool_filter is not None else None
+
     if dataset == "emem-bench-v1":
         from harness.benchmarks.academic.emem_bench_v1.runner import ScheduleRunner
 
@@ -257,7 +246,7 @@ def _build_runner(
                 embedder, llm, ablation, mem_config_overrides
             ),
             agent_factory=agent_factory,
-            dataset_tool_filter=_dataset_tool_filter(dataset),
+            dataset_tool_filter=tool_filter_list,
             max_samples=max_samples,
             dataset_name=dataset,
         )
@@ -271,7 +260,7 @@ def _build_runner(
         agent_factory=agent_factory,
         max_samples=max_samples,
         max_questions_per_sample=max_questions_per_sample,
-        dataset_tool_filter=_dataset_tool_filter(dataset),
+        dataset_tool_filter=tool_filter_list,
         question_template=_QUESTION_TEMPLATES.get(dataset),
         mem_config_overrides=mem_config_overrides,
     )
@@ -315,11 +304,10 @@ def _make_agent_factory(
         if agent_mode == "native":
             from harness.agent.react_agent import NativeToolCallAgent
 
-            native_kwargs = {k: v for k, v in agent_kwargs.items() if k != "think"}
             return NativeToolCallAgent(
                 mem,
                 system_prompt=system_preamble,
-                **native_kwargs,
+                **agent_kwargs,
             )
 
         from harness.agent.react_agent import ReactAgent
@@ -499,11 +487,11 @@ def main(argv: Optional[List[str]] = None) -> None:  # noqa: C901  # TODO: split
         default="native",
         help=(
             "Agent loop: 'native' uses Ollama's native tool-calling API "
-            "(default, recommended for Qwen 3.5 / Gemma 4 / Llama 3.x) "
-            "and 'react' uses text-mode ReAct prompting (fallback for "
-            "models without tools capability). If 'native' is selected "
-            "and the model does not advertise the tools capability, the "
-            "runner falls back to 'react' with a warning."
+            "(default for models that advertise the 'tools' capability); "
+            "'react' uses text-mode ReAct prompting (fallback for models "
+            "without tools support). If 'native' is selected and the "
+            "model does not advertise the tools capability, the runner "
+            "falls back to 'react' with a warning."
         ),
     )
     parser.add_argument("--ollama-url", default="http://localhost:11434")
@@ -556,9 +544,7 @@ def main(argv: Optional[List[str]] = None) -> None:  # noqa: C901  # TODO: split
         mem_config_overrides["recency_weight"] = args.recency_weight
         mem_config_overrides["recency_halflife"] = args.recency_halflife
 
-    all_reports: List[List[BenchmarkReport]] = []  # all_reports[abl_idx][run_idx]
-    for _ in ablation_names:
-        all_reports.append([])
+    all_reports: Dict[str, List[BenchmarkReport]] = {n: [] for n in ablation_names}
 
     for run_idx in range(args.n_runs):
         run_seed = None if args.seed is None else args.seed + run_idx
@@ -574,10 +560,6 @@ def main(argv: Optional[List[str]] = None) -> None:  # noqa: C901  # TODO: split
         )
         judge_model = args.judge_model or args.llm_model
         if judge_model != args.llm_model:
-            # Spin up a second client only when the judge model differs
-            # from the agent model. Consumed by LLM-judge scorers (none
-            # active in the current dataset set; wired back in when
-            # eMEM-Bench v1's scorer lands in A14a).
             _, judge_llm, _ = _make_providers(
                 args.provider,
                 args.embed_model,
@@ -615,7 +597,7 @@ def main(argv: Optional[List[str]] = None) -> None:  # noqa: C901  # TODO: split
             provider=args.provider,
         )
 
-        for abl_idx, abl_name in enumerate(ablation_names):
+        for abl_name in ablation_names:
             ablation = ABLATIONS[abl_name]
             loader = _make_loader(args.dataset, args.data_dir)
 
@@ -633,7 +615,7 @@ def main(argv: Optional[List[str]] = None) -> None:  # noqa: C901  # TODO: split
             )
 
             report = runner.run()
-            all_reports[abl_idx].append(report)
+            all_reports[abl_name].append(report)
 
             if not args.json:
                 header = f"run {run_idx + 1}/{args.n_runs}" if args.n_runs > 1 else ""
@@ -644,16 +626,16 @@ def main(argv: Optional[List[str]] = None) -> None:  # noqa: C901  # TODO: split
                     _print_details(report)
 
     if args.n_runs > 1 and not args.json:
-        for abl_idx, abl_name in enumerate(ablation_names):
-            _print_aggregate(abl_name, all_reports[abl_idx])
+        for abl_name in ablation_names:
+            _print_aggregate(abl_name, all_reports[abl_name])
 
     if args.json:
         out: List[Dict[str, Any]] = []
-        for abl_idx, abl_name in enumerate(ablation_names):
-            per_run = [r.summary() for r in all_reports[abl_idx]]
+        for abl_name in ablation_names:
+            per_run = [r.summary() for r in all_reports[abl_name]]
             entry: Dict[str, Any] = {"ablation": abl_name, "runs": per_run}
             if args.n_runs > 1:
-                entry["aggregate"] = _aggregate_summary(all_reports[abl_idx])
+                entry["aggregate"] = _aggregate_summary(all_reports[abl_name])
             out.append(entry)
         print(json.dumps(out, indent=2))
 
