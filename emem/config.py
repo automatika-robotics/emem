@@ -30,6 +30,7 @@ class SpatioTemporalMemoryConfig:
     entity_extract_time_interval: float = (
         60.0  # or every N seconds, whichever comes first
     )
+    entity_extract_chunk_size: int = 16  # Chunk entity extraction buffer llm calls
     entity_similarity_threshold: float = 0.85
     entity_text_similarity_threshold: float = 0.65
     entity_spatial_radius: float = 5.0

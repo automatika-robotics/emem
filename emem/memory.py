@@ -81,14 +81,21 @@ class SpatioTemporalMemory:
             self._drain_entity_buffer()
 
     def _drain_entity_buffer(self) -> None:
-        """Run entity extraction over buffered observations and reset counters."""
+        """Run entity extraction over buffered observations and reset counters.
+
+        The buffer is processed in chunks of
+        ``config.entity_extract_chunk_size`` so a single LLM call
+        never sees the entire backlog.
+        """
         if not self._entity_buffer:
             return
         batch = self._entity_buffer[:]
         self._entity_buffer.clear()
         self._entity_flush_count = 0
         self._entity_last_extract_time = time.time()
-        self._consolidation.extract_entities_from_observations(batch)
+        chunk = max(1, getattr(self._config, "entity_extract_chunk_size", 16))
+        for i in range(0, len(batch), chunk):
+            self._consolidation.extract_entities_from_observations(batch[i : i + chunk])
 
     # ── Ingestion ─────────────────────────────────────────────────
 
